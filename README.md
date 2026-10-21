@@ -1,7 +1,8 @@
-# create-sl-ide
+# sl-ide-create
 
 Start a slide deck with [sl-ide](https://github.com/dberm312/sl-ide-template),
 the IDE for building slides with Claude Code or Codex.
+Published to npm as `create-sl-ide`, which is what `pnpm create sl-ide` runs.
 
 ```sh
 pnpm create sl-ide my-deck
