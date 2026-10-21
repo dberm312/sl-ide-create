@@ -25,7 +25,7 @@
   "homepage": "https://sl-ide.com",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/dberm312/create-sl-ide.git"
+    "url": "git+https://github.com/dberm312/sl-ide-create.git"
   },
   "author": "David Berman",
   "packageManager": "pnpm@12.11.2",
