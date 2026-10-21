@@ -19,10 +19,10 @@ folder, whether to build right there; the repo; publishing), then:
    updates into your deck. The editor isn't bundled in this package, so every
    new deck starts from the template's current `main`.
 2. Creates the deck's own GitHub repo (private by default).
-3. Sets it up to publish to [sl-ide cloud](https://sl-ide.com): signs you in
+3. Sets it up to publish to [sl-ide cloud](https://app.sl-ide.com): signs you in
    through your browser, saves a token for your team, writes
    `sl-ide.config.json` and sets the repo's `SL_IDE_PUBLISH_TOKEN` secret.
-   Every push to `main` then updates `sl-ide.com/d/my-deck/`.
+   Every push to `main` then updates `app.sl-ide.com/d/my-deck/`.
 4. Runs `pnpm install`.
 
 Then `cd my-deck && pnpm dev`, open Claude Code or Codex there, and run
@@ -48,7 +48,7 @@ pnpm create sl-ide logout    # forget saved tokens
 ```
 
 Tokens are saved in `~/.config/sl-ide/credentials.json`, readable only by
-you, and can be revoked at sl-ide.com/tokens.
+you, and can be revoked at app.sl-ide.com/tokens.
 
 Needs Node 20.12+, git and pnpm, plus the GitHub CLI (`gh`) for the repo
 and publishing.
