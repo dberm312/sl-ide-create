@@ -9,12 +9,12 @@
 //
 //   pnpm create sl-ide .         start the deck in this (empty) folder, named after it
 //   pnpm create sl-ide login     sign in to sl-ide cloud and save a team token
-//   pnpm create sl-ide logout    forget saved tokens
+//   pnpm create sl-ide logout    forget saved tokens for this cloud server
 import fs from 'node:fs';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import * as p from '@clack/prompts';
-import { CLOUD, credsPath, deviceLogin, forget, legacyToken, readCreds, saveToken, slugAvailable, whoami } from './lib/cloud.mjs';
+import { CLOUD, DEFAULT_CLOUD, credsPath, deviceLogin, forget, readCreds, saveToken, slugAvailable, whoami } from './lib/cloud.mjs';
 import { ghReady, has, run, stopRunning } from './lib/run.mjs';
 import { chooseSlug, SLUG_RE } from './lib/slug.mjs';
 
@@ -42,7 +42,7 @@ const HELP = `
 
   Commands
     login                    sign in to sl-ide cloud and save a team token
-    logout [team]            forget saved tokens
+    logout [team]            forget saved tokens for this server (--all: every server)
 
   Every push to the deck's repo publishes it to ${CLOUD}/d/<slug>/.
   Existing slugs get a numeric suffix unless --replace is explicitly provided.
@@ -65,6 +65,7 @@ const { values: o, positionals } = parseArgs({
     open: { type: 'boolean', default: true },
     'no-open': { type: 'boolean' },
     yes: { type: 'boolean', short: 'y' },
+    all: { type: 'boolean' },
     help: { type: 'boolean', short: 'h' },
   },
 });
@@ -98,17 +99,15 @@ async function signIn() {
   return got;
 }
 
-// A token for the deck's team: a saved one, the legacy admin token, or a new
-// browser sign-in. Returns { team, token } or null to skip publishing.
+// A token for the deck's team on this server: a saved one or a new browser
+// sign-in. Returns { team, token } or null to skip publishing.
 async function publishCredentials() {
-  const saved = readCreds().teams;
+  const saved = readCreds();
   const teams = Object.keys(saved);
-  const admin = legacyToken();
 
   if (o.team) {
     if (!SLUG_RE.test(o.team)) bail(`--team "${o.team}" isn't a team slug`);
     if (saved[o.team]) return { team: o.team, token: saved[o.team].token };
-    if (admin) return { team: o.team, token: admin };
     p.log.info(`No saved token for team ${o.team}. Sign in to make one.`);
     const got = await signIn();
     if (got.team !== o.team) p.log.warn(`You approved team ${got.team}; publishing for that team instead.`);
@@ -164,12 +163,14 @@ function recoverySteps(step, { rel, here, repo }) {
 async function login() {
   p.intro('sl-ide cloud');
   await signIn();
-  p.outro(`Saved to ${credsPath}. New decks can publish for this team.`);
+  p.outro(`Saved to ${credsPath} for ${CLOUD}. New decks can publish for this team.`);
 }
 
 function logout() {
-  forget(positionals[1]);
-  console.log(positionals[1] ? `Forgot the token for ${positionals[1]}.` : 'Forgot all saved sl-ide tokens.');
+  const team = positionals[1];
+  forget(team, { all: o.all });
+  console.log(o.all ? 'Forgot saved sl-ide tokens for every server.'
+    : team ? `Forgot the token for ${team} on ${CLOUD}.` : `Forgot saved sl-ide tokens for ${CLOUD}.`);
 }
 
 async function create() {
@@ -262,6 +263,7 @@ async function create() {
     if (pub) {
       const ok = await whoami(pub.token);
       if (!ok) bail(`The saved token for ${pub.team} was rejected (revoked?). Run: pnpm create sl-ide login`);
+      if (ok.team !== pub.team && !ok.admin) bail(`The token saved for ${pub.team} belongs to team ${ok.team}. Run: pnpm create sl-ide login`);
       const originalSlug = slug;
       try {
         slug = await chooseSlug(slug, { replace: o.replace, check: (candidate) => slugAvailable(pub.token, candidate) });
@@ -314,7 +316,8 @@ async function create() {
 
     if (pub) {
       step = 'config';
-      const config = { slug, team: pub.team, visibility: share };
+      // CI publishes to the server the token came from.
+      const config = { slug, team: pub.team, visibility: share, ...(CLOUD === DEFAULT_CLOUD ? {} : { url: CLOUD }) };
       fs.writeFileSync(path.join(dest, 'sl-ide.config.json'), `${JSON.stringify(config, null, 2)}\n`);
       await run('git', ['add', 'sl-ide.config.json'], { cwd: dest });
       await run('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `Publish to sl-ide cloud as ${slug} (${share}, team ${pub.team})`], { cwd: dest });

@@ -45,11 +45,14 @@ Then `cd my-deck && pnpm dev`, open Claude Code or Codex there, and run
 
 ```sh
 pnpm create sl-ide login     # sign in and save a token for a team
-pnpm create sl-ide logout    # forget saved tokens
+pnpm create sl-ide logout    # forget saved tokens (--all: for every server)
 ```
 
 Tokens are saved in `~/.config/sl-ide/credentials.json`, readable only by
-you, and can be revoked at app.sl-ide.com/tokens.
+you, and can be revoked at app.sl-ide.com/tokens. Each token is kept for the
+server that issued it and only ever sent there. `SL_IDE_URL` picks another
+server (https, or http on localhost), which needs its own `login`; decks set up
+against it record it as `url` in `sl-ide.config.json`.
 
 Needs Node 20.12+, git and pnpm, plus the GitHub CLI (`gh`) for the repo
 and publishing.

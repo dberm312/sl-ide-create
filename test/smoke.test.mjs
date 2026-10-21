@@ -1,7 +1,7 @@
 // create-A: setup variants, expired credentials, interruption and recovery.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { alive, sandbox } from './harness.mjs';
+import { alive, PROD, sandbox, savedCreds } from './harness.mjs';
 
 const PUBLISH = ['pitch', '--yes', '--team', 'acme'];
 
@@ -132,22 +132,50 @@ test('login saves the approved team token privately', (t) => {
   const r = sandbox(t, { creds: null }).run(['login', '--no-open']);
   assert.equal(r.status, 0, r.out);
   assert.match(r.out, /ABCD-1234/);
-  assert.equal(r.creds.teams.acme.token, 'sli_new');
+  assert.equal(r.creds.servers[PROD].teams.acme.token, 'sli_new');
   assert.equal(r.credsMode, 0o600);
 });
 
 test('signing in for --team publishes for the team that was approved', (t) => {
-  const r = sandbox(t, { creds: null, cloud: { poll: { status: 200, json: { team: 'globex', token: 'sli_globex' } } } })
+  const r = sandbox(t, { creds: null, cloud: { poll: { status: 200, json: { team: 'globex', token: 'sli_globex' } }, whoami: { status: 200, json: { team: 'globex' } } } })
     .run(['pitch', '--yes', '--team', 'acme', '--no-open', '--no-install']);
   assert.equal(r.status, 0, r.out);
   assert.match(r.out, /You approved team globex/);
   assert.equal(r.config().team, 'globex');
 });
 
-test('logout forgets saved tokens', (t) => {
-  const box = sandbox(t, { creds: { teams: { acme: { token: 'a' }, globex: { token: 'g' } } } });
-  assert.deepEqual(Object.keys(box.run(['logout', 'acme']).creds.teams), ['globex']);
-  assert.deepEqual(box.run(['logout']).creds.teams, {});
+test('a token that belongs to another team stops before cloning', (t) => {
+  const r = sandbox(t, { cloud: { whoami: { status: 200, json: { team: 'globex' } } } }).run(PUBLISH);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /token saved for acme belongs to team globex/);
+  assert.ok(!r.ran('git clone'));
+});
+
+test('credentials in an older layout read as none and are never sent', (t) => {
+  const r = sandbox(t, { creds: { url: PROD, teams: { acme: { token: 'old-token' } } } }).run(['pitch', '--yes', '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /pass --team <slug>, or run pnpm create sl-ide login/);
+  assert.ok(r.fetches.every((f) => f.auth === null), JSON.stringify(r.fetches));
+});
+
+const LOCAL = 'http://localhost:3000';
+const TWO_SERVERS = savedCreds({ [PROD]: { acme: 'prod-a', globex: 'prod-g' }, [LOCAL]: { acme: 'local-a' } });
+
+test('logout forgets tokens for this server only', (t) => {
+  const box = sandbox(t, { creds: TWO_SERVERS });
+  const one = box.run(['logout', 'acme']);
+  assert.match(one.out, /Forgot the token for acme on https:\/\/app\.sl-ide\.com/);
+  assert.deepEqual(Object.keys(one.creds.servers[PROD].teams), ['globex']);
+  assert.equal(one.creds.servers[LOCAL].teams.acme.token, 'local-a');
+  const all = box.run(['logout']);
+  assert.equal(all.creds.servers[PROD], undefined);
+  assert.equal(all.creds.servers[LOCAL].teams.acme.token, 'local-a');
+});
+
+test('logout --all forgets every server', (t) => {
+  const r = sandbox(t, { creds: TWO_SERVERS }).run(['logout', '--all']);
+  assert.match(r.out, /every server/);
+  assert.deepEqual(r.creds.servers, {});
 });
 
 // --- cloud domain ----------------------------------------------------------
@@ -161,12 +189,48 @@ test('setup and sign-in default to app.sl-ide.com', (t) => {
   assert.match(r.out, /https:\/\/app\.sl-ide\.com\/d\/pitch\//);
 });
 
-test('SL_IDE_URL points every cloud call at another server', (t) => {
-  const r = sandbox(t, { env: { SL_IDE_URL: 'http://localhost:3000/' } }).run([...PUBLISH, '--no-install']);
+test('cloud calls never follow redirects', (t) => {
+  const r = sandbox(t).run([...PUBLISH, '--no-install']);
   assert.equal(r.status, 0, r.out);
-  for (const { url } of r.fetches) assert.equal(new URL(url).origin, 'http://localhost:3000');
+  for (const f of r.fetches) assert.equal(f.redirect, 'error', JSON.stringify(f));
+});
+
+test('SL_IDE_URL points every cloud call at another server, with its own token', (t) => {
+  const r = sandbox(t, { creds: TWO_SERVERS, env: { SL_IDE_URL: 'HTTP://LOCALHOST:3000/some/path/' } }).run([...PUBLISH, '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  for (const { url, auth } of r.fetches) {
+    assert.equal(new URL(url).origin, LOCAL);
+    assert.equal(auth, 'Bearer local-a');
+  }
+  assert.ok(r.ran('gh secret set SL_IDE_PUBLISH_TOKEN'));
+  assert.deepEqual(r.config(), { slug: 'pitch', team: 'acme', visibility: 'team', url: LOCAL });
   assert.match(r.out, /http:\/\/localhost:3000\/d\/pitch\//);
 });
+
+test('a production token is never sent to another server', (t) => {
+  const r = sandbox(t, { env: { SL_IDE_URL: LOCAL } }).run(['pitch', '--yes', '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /pass --team <slug>, or run pnpm create sl-ide login/);
+  assert.ok(r.fetches.every((f) => f.auth === null), JSON.stringify(r.fetches));
+  assert.ok(!r.ran('gh secret'));
+});
+
+test('signing in on another server saves the token for that server', (t) => {
+  const r = sandbox(t, { env: { SL_IDE_URL: LOCAL } }).run(['login', '--no-open']);
+  assert.equal(r.status, 0, r.out);
+  assert.equal(r.creds.servers[LOCAL].teams.acme.token, 'sli_new');
+  assert.equal(r.creds.servers[PROD].teams.acme.token, 'fake-token');
+});
+
+for (const bad of ['http://staging.example.com', 'https://user:pw@app.sl-ide.com', 'not a url']) {
+  test(`SL_IDE_URL=${bad} is refused before any cloud call`, (t) => {
+    const r = sandbox(t, { env: { SL_IDE_URL: bad } }).run(PUBLISH);
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /SL_IDE_URL: /);
+    assert.deepEqual(r.fetches, []);
+    assert.ok(!r.ran('git clone'));
+  });
+}
 
 // --- failures and recovery -------------------------------------------------
 

@@ -51,7 +51,8 @@ const preloadSource = `import fs from 'node:fs';
 const cloud = JSON.parse(process.env.TEST_CLOUD);
 globalThis.fetch = async (url, init = {}) => {
   const { pathname } = new URL(url);
-  fs.appendFileSync(process.env.TEST_FETCHES, JSON.stringify({ url: String(url), method: init.method || 'GET' }) + '\\n');
+  const auth = init.headers?.Authorization ?? null;
+  fs.appendFileSync(process.env.TEST_FETCHES, JSON.stringify({ url: String(url), method: init.method || 'GET', auth, redirect: init.redirect ?? 'follow' }) + '\\n');
   const reply = pathname === '/api/cli/whoami' ? cloud.whoami
     : pathname === '/api/cli/login/start' ? cloud.start
     : pathname === '/api/cli/login/poll' ? cloud.poll
@@ -61,11 +62,20 @@ globalThis.fetch = async (url, init = {}) => {
 };
 `;
 
+export const PROD = 'https://app.sl-ide.com';
+// A credentials.json with `teams` ({ team: token }) saved for each server.
+export const savedCreds = (servers) => ({
+  version: 2,
+  servers: Object.fromEntries(Object.entries(servers).map(([server, teams]) => [server, {
+    teams: Object.fromEntries(Object.entries(teams).map(([team, token]) => [team, { token }])),
+  }])),
+});
+
 const lines = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 
 // creds: saved credentials.json, or null for none. useFormat: whether the
 // cloned template has scripts/use-format.mjs.
-export function sandbox(t, { creds = { teams: { acme: { token: 'fake-token' } } }, cloud = {}, fail = [], hang = [], useFormat = true, env = {} } = {}) {
+export function sandbox(t, { creds = savedCreds({ [PROD]: { acme: 'fake-token' } }), cloud = {}, fail = [], hang = [], useFormat = true, env = {} } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-ide-create-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const bin = path.join(root, 'bin');
