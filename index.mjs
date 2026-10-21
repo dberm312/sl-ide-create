@@ -16,9 +16,9 @@ import { parseArgs } from 'node:util';
 import * as p from '@clack/prompts';
 import { CLOUD, credsPath, deviceLogin, forget, legacyToken, readCreds, saveToken, slugAvailable, whoami } from './lib/cloud.mjs';
 import { ghReady, has, run } from './lib/run.mjs';
+import { chooseSlug, SLUG_RE } from './lib/slug.mjs';
 
 const TEMPLATE = process.env.SL_IDE_TEMPLATE || 'https://github.com/dberm312/sl-ide-template.git';
-const SLUG_RE = /^[a-z0-9](?:[a-z0-9-]{0,62}[a-z0-9])?$/;
 
 const HELP = `
   pnpm create sl-ide [name] [options]
@@ -32,6 +32,7 @@ const HELP = `
     --dir <path>             folder to create the deck in (default: ./<name>)
     --github <private|public|none>   the deck's GitHub repo (default: private)
     --team <slug>            the sl-ide cloud team that owns the deck
+    --replace <slug>         explicitly publish over an existing deck instead of creating a new slug
     --share <team|public>    team-only initially; enable public sharing on the cloud deck page
     --no-publish             don't set up publishing to sl-ide cloud
     --no-install             skip pnpm install
@@ -43,7 +44,8 @@ const HELP = `
     login                    sign in to sl-ide cloud and save a team token
     logout [team]            forget saved tokens
 
-  Every push to the deck's repo publishes it to ${CLOUD}/d/<name>/.
+  Every push to the deck's repo publishes it to ${CLOUD}/d/<slug>/.
+  Existing slugs get a numeric suffix unless --replace is explicitly provided.
 `;
 
 const { values: o, positionals } = parseArgs({
@@ -54,6 +56,7 @@ const { values: o, positionals } = parseArgs({
     dir: { type: 'string' },
     github: { type: 'string' },
     team: { type: 'string' },
+    replace: { type: 'string' },
     share: { type: 'string' },
     publish: { type: 'boolean', default: true },
     'no-publish': { type: 'boolean' },
@@ -171,7 +174,7 @@ async function create() {
     }));
   }
   if (!/^[A-Za-z0-9._-]+$/.test(name)) bail(`"${name}" isn't a valid name (letters, digits, . _ -)`);
-  const slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
+  let slug = name.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/^-|-$/g, '');
   if (!SLUG_RE.test(slug)) bail(`can't make a link name from "${name}"`);
 
   // Slides or a memo. A memo is the same template with the memo starter
@@ -232,9 +235,12 @@ async function create() {
     if (pub) {
       const ok = await whoami(pub.token);
       if (!ok) bail(`The saved token for ${pub.team} was rejected (revoked?). Run: pnpm create sl-ide login`);
-      const avail = await slugAvailable(pub.token, slug);
-      if (!avail.available) bail(`Can't publish as ${slug}: ${avail.reason}. Pick another name.`);
-      if (avail.exists) p.log.warn(`Team ${pub.team} already has a deck called ${slug}; this one will publish over it.`);
+      const originalSlug = slug;
+      try {
+        slug = await chooseSlug(slug, { replace: o.replace, check: (candidate) => slugAvailable(pub.token, candidate) });
+      } catch (e) { bail(e.message); }
+      if (o.replace !== undefined) p.log.warn(`Explicitly replacing deck ${slug} for team ${pub.team}.`);
+      else if (slug !== originalSlug) p.log.info(`Using new deck slug ${slug}; ${originalSlug} is already in use.`);
       // Publishing never changes privacy. Public sharing is an authenticated
       // action on the cloud deck page, after the first successful publish.
       if (share === 'public') p.log.warn('New decks start team-only. After publishing, choose Anyone with the link on the cloud deck page.');
@@ -244,6 +250,8 @@ async function create() {
   } else if (o.publish && github === 'none') {
     p.log.info('Publishing runs in GitHub Actions, so it is off without a repo.');
   }
+
+  if (o.replace !== undefined && !pub) bail('--replace requires cloud publishing and a GitHub repo.');
 
   // Do it
   const s = p.spinner();
