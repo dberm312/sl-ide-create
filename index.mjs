@@ -253,7 +253,10 @@ async function create() {
 
   // Publishing
   let pub = null;
-  let share = o.share ?? 'team';
+  if (o.share !== undefined && !['team', 'public'].includes(o.share)) bail('--share is team or public');
+  // Publishing never changes privacy. Public sharing is an authenticated
+  // action on the cloud deck page, after the first successful publish.
+  const share = 'team';
   if (o.publish && github !== 'none') {
     pub = await publishCredentials();
     if (pub) {
@@ -265,11 +268,7 @@ async function create() {
       } catch (e) { bail(e.message); }
       if (o.replace !== undefined) p.log.warn(`Explicitly replacing deck ${slug} for team ${pub.team}.`);
       else if (slug !== originalSlug) p.log.info(`Using new deck slug ${slug}; ${originalSlug} is already in use.`);
-      // Publishing never changes privacy. Public sharing is an authenticated
-      // action on the cloud deck page, after the first successful publish.
-      if (share === 'public') p.log.warn('New decks start team-only. After publishing, choose Anyone with the link on the cloud deck page.');
-      if (!['team', 'public'].includes(share)) bail('--share is team or public');
-      share = 'team';
+      if (o.share === 'public') p.log.warn('New decks start team-only. After publishing, choose Anyone with the link on the cloud deck page.');
     }
   } else if (o.publish && github === 'none') {
     p.log.info('Publishing runs in GitHub Actions, so it is off without a repo.');
@@ -359,7 +358,8 @@ async function create() {
   ];
   p.note(lines.join('\n'), 'Next');
   if (pub) {
-    p.log.success(`Every push to main publishes ${CLOUD}/d/${slug}/ (${share === 'public' ? 'anyone with the link' : `team ${pub.team}`}).`);
+    p.log.success(`Every push to main publishes ${CLOUD}/d/${slug}/ (team ${pub.team} only).`);
+    p.log.info(`To share it publicly, open ${CLOUD}/decks/${slug} after the first publish and save Anyone with the link under Sharing.`);
   } else {
     p.log.info('Not publishing. To publish later, add sl-ide.config.json (see the deck\'s README).');
   }

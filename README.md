@@ -61,8 +61,7 @@ use `pnpm create sl-ide new-repo --team acme --replace my-deck`.
 The target must exist and your token must have permission to publish to it.
 Setup checks availability before creating the repo; it does not reserve the slug.
 
-
 New decks start team-only. After the first publish, open the deck's cloud page
-and save “Anyone with the link” under Sharing to make it public. Publishing
-cannot change sharing settings; `--share public` prints this instruction and
-creates a team-only deck.
+(`app.sl-ide.com/decks/my-deck`) and save “Anyone with the link” under Sharing
+to make it public; setup prints this link. Publishing cannot change sharing
+settings; `--share public` prints this instruction and creates a team-only deck.
