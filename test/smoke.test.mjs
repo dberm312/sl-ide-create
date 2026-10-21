@@ -1,0 +1,228 @@
+// create-A: setup variants, expired credentials, interruption and recovery.
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { alive, sandbox } from './harness.mjs';
+
+const PUBLISH = ['pitch', '--yes', '--team', 'acme'];
+
+// --- formats ---------------------------------------------------------------
+
+test('slides: clones, publishes for the team and installs', (t) => {
+  const r = sandbox(t).run(PUBLISH);
+  assert.equal(r.status, 0, r.out);
+  assert.deepEqual(r.config(), { slug: 'pitch', team: 'acme', visibility: 'team' });
+  for (const step of ['git clone', 'git remote rename origin upstream', 'gh repo create pitch --private', 'gh secret set SL_IDE_PUBLISH_TOKEN --repo tester/pitch', 'git push -q -u origin main', 'pnpm install']) {
+    assert.ok(r.ran(step), `${step} should run:\n${r.out}`);
+  }
+  assert.ok(!r.ran('node scripts/use-format.mjs'));
+  assert.equal(r.file('pitch/format.txt'), null);
+  assert.match(r.out, /Deck ready\./);
+});
+
+test('memo: swaps in the memo starter and commits it before publishing', (t) => {
+  const r = sandbox(t).run([...PUBLISH, '--memo']);
+  assert.equal(r.status, 0, r.out);
+  assert.equal(r.file('pitch/format.txt'), 'memo');
+  const commits = r.commands.filter((c) => c.includes('commit')).map((c) => c.at(-1));
+  assert.deepEqual(commits, ['Start from the memo starter', 'Publish to sl-ide cloud as pitch (team, team acme)']);
+  assert.match(r.out, /outline the memo/);
+  assert.match(r.out, /Memo ready\./);
+});
+
+test('memo on a template without formats stops with recovery steps', (t) => {
+  const r = sandbox(t, { useFormat: false }).run([...PUBLISH, '--format', 'memo']);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /this sl-ide template has no memo format yet/);
+  assert.match(r.out, /Nothing was created on GitHub/);
+  assert.ok(!r.ran('gh repo create'));
+});
+
+test('an unknown format is rejected before cloning', (t) => {
+  const r = sandbox(t).run([...PUBLISH, '--format', 'poster']);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /--format is slides or memo/);
+  assert.ok(!r.ran('git clone'));
+});
+
+test('--share public still starts team-only and says how to share publicly', (t) => {
+  const r = sandbox(t).run([...PUBLISH, '--share', 'public', '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  assert.equal(r.config().visibility, 'team');
+  assert.match(r.out, /New decks start team-only[\s\S]*Anyone with the link/);
+});
+
+// --- skipped steps ---------------------------------------------------------
+
+test('--github none: no GitHub calls, no publishing, still a working deck', (t) => {
+  const r = sandbox(t).run([...PUBLISH, '--github', 'none', '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  assert.ok(r.ran('git clone'));
+  assert.ok(!r.commands.some((c) => c[0] === 'gh' && c[1] !== 'auth'), JSON.stringify(r.commands));
+  assert.equal(r.config(), null);
+  assert.deepEqual(r.fetches, []);
+  assert.match(r.out, /Publishing runs in GitHub Actions/);
+  assert.match(r.out, /Not publishing/);
+});
+
+test('gh not signed in: warns and continues without a repo', (t) => {
+  const r = sandbox(t, { fail: ['gh auth status'] }).run(['pitch', '--yes', '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /GitHub CLI not signed in/);
+  assert.ok(!r.ran('gh repo create'));
+});
+
+test('--github private without gh sign-in stops before cloning', (t) => {
+  const r = sandbox(t, { fail: ['gh auth status'] }).run([...PUBLISH, '--github', 'private']);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /gh auth login/);
+  assert.ok(!r.ran('git clone'));
+});
+
+test('--no-publish: makes the repo but sets no secret and no config', (t) => {
+  const r = sandbox(t).run([...PUBLISH, '--no-publish', '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  assert.ok(r.ran('gh repo create'));
+  assert.ok(!r.ran('gh secret'));
+  assert.equal(r.config(), null);
+  assert.deepEqual(r.fetches, []);
+});
+
+test('--no-install: skips pnpm install and lists it as a next step', (t) => {
+  const r = sandbox(t).run([...PUBLISH, '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  assert.ok(!r.ran('pnpm install'));
+  assert.match(r.out, /cd pitch\s[\s\S]*pnpm install[\s\S]*pnpm dev/);
+});
+
+test('non-interactive with no saved team skips publishing and says how to start', (t) => {
+  const r = sandbox(t, { creds: null }).run(['pitch', '--yes', '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /pass --team <slug>, or run pnpm create sl-ide login/);
+  assert.equal(r.config(), null);
+  assert.ok(!r.ran('gh secret'));
+});
+
+test('an existing non-empty folder stops before anything runs', (t) => {
+  const box = sandbox(t);
+  box.run(['pitch', '--yes', '--github', 'none', '--no-install']);
+  const r = box.run(['pitch', '--yes', '--github', 'none', '--no-install']);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /already exists and isn't empty/);
+});
+
+// --- credentials -----------------------------------------------------------
+
+test('a rejected saved token stops before cloning and says to sign in again', (t) => {
+  const r = sandbox(t, { cloud: { whoami: { status: 401, json: { error: 'unauthorized' } } } }).run(PUBLISH);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /token for acme was rejected[\s\S]*pnpm create sl-ide login/);
+  assert.ok(!r.ran('git clone'));
+});
+
+test('an expired sign-in code during setup stops before cloning and saves nothing', (t) => {
+  const r = sandbox(t, { creds: null, cloud: { poll: { status: 410, json: { error: 'expired_token' } } } })
+    .run(['pitch', '--yes', '--team', 'acme', '--no-open']);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /sign-in code expired; run the command again/);
+  assert.equal(r.creds, null);
+  assert.ok(!r.ran('git clone'));
+});
+
+test('login saves the approved team token privately', (t) => {
+  const r = sandbox(t, { creds: null }).run(['login', '--no-open']);
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /ABCD-1234/);
+  assert.equal(r.creds.teams.acme.token, 'sli_new');
+  assert.equal(r.credsMode, 0o600);
+});
+
+test('signing in for --team publishes for the team that was approved', (t) => {
+  const r = sandbox(t, { creds: null, cloud: { poll: { status: 200, json: { team: 'globex', token: 'sli_globex' } } } })
+    .run(['pitch', '--yes', '--team', 'acme', '--no-open', '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  assert.match(r.out, /You approved team globex/);
+  assert.equal(r.config().team, 'globex');
+});
+
+test('logout forgets saved tokens', (t) => {
+  const box = sandbox(t, { creds: { teams: { acme: { token: 'a' }, globex: { token: 'g' } } } });
+  assert.deepEqual(Object.keys(box.run(['logout', 'acme']).creds.teams), ['globex']);
+  assert.deepEqual(box.run(['logout']).creds.teams, {});
+});
+
+// --- cloud domain ----------------------------------------------------------
+
+test('setup and sign-in default to app.sl-ide.com', (t) => {
+  const r = sandbox(t, { creds: null }).run(['pitch', '--yes', '--team', 'acme', '--no-open', '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  assert.ok(r.fetches.length >= 3, JSON.stringify(r.fetches));
+  for (const { url } of r.fetches) assert.equal(new URL(url).origin, 'https://app.sl-ide.com');
+  assert.match(r.out, /https:\/\/app\.sl-ide\.com\/cli\?code=ABCD-1234/);
+  assert.match(r.out, /https:\/\/app\.sl-ide\.com\/d\/pitch\//);
+});
+
+test('SL_IDE_URL points every cloud call at another server', (t) => {
+  const r = sandbox(t, { env: { SL_IDE_URL: 'http://localhost:3000/' } }).run([...PUBLISH, '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  for (const { url } of r.fetches) assert.equal(new URL(url).origin, 'http://localhost:3000');
+  assert.match(r.out, /http:\/\/localhost:3000\/d\/pitch\//);
+});
+
+// --- failures and recovery -------------------------------------------------
+
+test('a failed clone says nothing reached GitHub and how to start over', (t) => {
+  const r = sandbox(t, { fail: ['git clone'] }).run(PUBLISH);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /Nothing was created on GitHub/);
+  assert.match(r.out, /Delete pitch, then run:[\s│]*pnpm create sl-ide pitch --yes --team acme/);
+});
+
+test('a failed repo create asks to check GitHub before starting over', (t) => {
+  const r = sandbox(t, { fail: ['gh repo create'] }).run(PUBLISH);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /Check github\.com\/tester\/pitch[\s\S]*gh repo delete tester\/pitch/);
+  assert.ok(!r.ran('git push'));
+});
+
+test('a failed secret explains how to finish publishing by hand', (t) => {
+  const r = sandbox(t, { fail: ['gh secret set'] }).run(PUBLISH);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /gh secret set SL_IDE_PUBLISH_TOKEN --repo tester\/pitch failed \(test\)/);
+  assert.match(r.out, /https:\/\/app\.sl-ide\.com\/tokens[\s\S]*cd pitch[\s\S]*gh secret set SL_IDE_PUBLISH_TOKEN --repo tester\/pitch[\s\S]*git push -u origin main/);
+  assert.ok(!r.ran('git push'), 'never pushes without the publish secret');
+  assert.doesNotMatch(r.out, /fake-token/);
+});
+
+test('a failed push says to push again', (t) => {
+  const r = sandbox(t, { fail: ['git push'] }).run(PUBLISH);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /github\.com\/tester\/pitch exists[\s\S]*cd pitch[\s\S]*git push -u origin main/);
+  assert.ok(!r.ran('pnpm install'));
+});
+
+test('a failed install leaves a published deck and says to install', (t) => {
+  const r = sandbox(t, { fail: ['pnpm install'] }).run(PUBLISH);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /Only the install is left[\s\S]*cd pitch[\s\S]*pnpm install/);
+});
+
+test('in-place setup recovery says to empty the folder, not cd', (t) => {
+  const box = sandbox(t, { fail: ['git clone'] });
+  const r = box.run(['.', '--yes', '--team', 'acme']);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /Empty this folder, then run:[\s│]*pnpm create sl-ide \. --yes --team acme/);
+});
+
+for (const [step, signal, code, recovery] of [
+  ['git clone', 'SIGINT', 130, /Nothing was created on GitHub/],
+  ['git push', 'SIGINT', 130, /cd pitch[\s\S]*git push -u origin main/],
+  ['pnpm install', 'SIGTERM', 143, /Only the install is left/],
+]) {
+  test(`interrupted during ${step} (${signal}): stops the command, fails and explains recovery`, async (t) => {
+    const r = await sandbox(t, { hang: [step] }).interrupt(PUBLISH, signal);
+    assert.equal(r.status, code, r.out);
+    assert.match(r.out, /Setup was interrupted\. To recover:/);
+    assert.match(r.out, recovery);
+    assert.ok(!alive(r.hungPid), `${step} should be stopped`);
+  });
+}

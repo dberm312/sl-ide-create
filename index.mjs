@@ -15,7 +15,7 @@ import path from 'node:path';
 import { parseArgs } from 'node:util';
 import * as p from '@clack/prompts';
 import { CLOUD, credsPath, deviceLogin, forget, legacyToken, readCreds, saveToken, slugAvailable, whoami } from './lib/cloud.mjs';
-import { ghReady, has, run } from './lib/run.mjs';
+import { ghReady, has, run, stopRunning } from './lib/run.mjs';
 import { chooseSlug, SLUG_RE } from './lib/slug.mjs';
 
 const TEMPLATE = process.env.SL_IDE_TEMPLATE || 'https://github.com/dberm312/sl-ide-template.git';
@@ -133,6 +133,30 @@ async function publishCredentials() {
   if (choice === 'login') return signIn();
   const team = choice.slice(5);
   return { team, token: saved[team].token };
+}
+
+// --- recovery --------------------------------------------------------------
+
+// What to do when setup stops during `step`. Until the GitHub repo exists,
+// everything is local, so starting over is safe.
+function recoverySteps(step, { rel, here, repo }) {
+  const cd = rel === '.' ? [] : [`cd ${rel}`];
+  const again = ['pnpm create sl-ide', ...process.argv.slice(2)].join(' ');
+  // Commands get their own lines so they copy cleanly.
+  const fresh = [here ? 'Empty this folder, then run:' : `Delete ${rel}, then run:`, again];
+  switch (step) {
+    case 'repo':
+      return [`Check github.com/${repo}. If it was created, delete it:`, `gh repo delete ${repo}`, ...fresh];
+    case 'secret':
+      return [`github.com/${repo} exists but can't publish yet.`, `Make a team token at ${CLOUD}/tokens, then:`,
+        ...cd, `gh secret set SL_IDE_PUBLISH_TOKEN --repo ${repo}`, 'git push -u origin main'];
+    case 'push':
+      return [`github.com/${repo} exists. Push the deck to it:`, ...cd, 'git push -u origin main'];
+    case 'install':
+      return ['The deck is set up. Only the install is left:', ...cd, 'pnpm install'];
+    default:
+      return ['Nothing was created on GitHub.', ...fresh];
+  }
 }
 
 // --- commands --------------------------------------------------------------
@@ -254,8 +278,23 @@ async function create() {
   if (o.replace !== undefined && !pub) bail('--replace requires cloud publishing and a GitHub repo.');
 
   // Do it
+  const rel = path.relative(process.cwd(), dest) || '.';
+  const where = { rel, here, repo: `${owner}/${name}` };
   const s = p.spinner();
+  let step = null;
+  // Ctrl-C during a spinner exits 0 from inside clack, so the exit hook (not
+  // only SIGINT) reports an unfinished step.
+  process.on('SIGINT', () => process.exit(130));
+  process.on('SIGTERM', () => process.exit(143));
+  process.on('exit', () => {
+    if (!step) return;
+    stopRunning();
+    s.cancel('Interrupted');
+    fs.writeSync(2, `\nSetup was interrupted. To recover:\n${recoverySteps(step, where).map((l) => `  ${l}`).join('\n')}\n`);
+    if (!process.exitCode) process.exitCode = 130;
+  });
   try {
+    step = 'clone';
     s.start('Cloning the latest sl-ide template');
     await run('git', ['clone', '-q', TEMPLATE, dest]);
     await run('git', ['remote', 'rename', 'origin', 'upstream'], { cwd: dest });
@@ -264,6 +303,7 @@ async function create() {
     s.stop(`Cloned sl-ide (${head.split(' ')[0]})`);
 
     if (format !== 'slides') {
+      step = 'format';
       if (!fs.existsSync(path.join(dest, 'scripts', 'use-format.mjs'))) {
         throw new Error(`this sl-ide template has no ${format} format yet`);
       }
@@ -274,6 +314,7 @@ async function create() {
     }
 
     if (pub) {
+      step = 'config';
       const config = { slug, team: pub.team, visibility: share };
       fs.writeFileSync(path.join(dest, 'sl-ide.config.json'), `${JSON.stringify(config, null, 2)}\n`);
       await run('git', ['add', 'sl-ide.config.json'], { cwd: dest });
@@ -281,25 +322,33 @@ async function create() {
     }
 
     if (github !== 'none') {
+      step = 'repo';
       s.start(`Creating github.com/${owner}/${name}`);
       await run('gh', ['repo', 'create', name, `--${github}`, '--source', '.', '--remote', 'origin'], { cwd: dest });
       // Before the first push, so its CI run publishes.
+      step = 'secret';
       if (pub) await run('gh', ['secret', 'set', 'SL_IDE_PUBLISH_TOKEN', '--repo', `${owner}/${name}`], { cwd: dest, input: pub.token });
+      step = 'push';
       await run('git', ['push', '-q', '-u', 'origin', 'main'], { cwd: dest });
       s.stop(`Created github.com/${owner}/${name} (${github})`);
     }
 
     if (o.install) {
+      step = 'install';
       s.start('Installing dependencies');
       await run('pnpm', ['install', '--silent'], { cwd: dest });
       s.stop('Installed dependencies');
     }
   } catch (e) {
+    const failed = step;
+    step = null;
     s.stop('Stopped');
-    bail(e.message);
+    p.log.error(e.message);
+    p.note(recoverySteps(failed, where).join('\n'), 'To recover');
+    bail('Setup did not finish.');
   }
+  step = null;
 
-  const rel = path.relative(process.cwd(), dest) || '.';
   const lines = [
     ...(rel === '.' ? [] : [`cd ${rel}`]),
     ...(o.install ? [] : ['pnpm install']),
