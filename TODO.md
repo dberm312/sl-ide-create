@@ -14,6 +14,7 @@
   recorded URL is currently ignored, so changing SL_IDE_URL can send a production
   token to another server. Migrate existing credentials safely and test server
   switching, logout and legacy-token handling. (Review issue 5.)
-- [ ] Prevent accidental replacement of an existing team deck: choose a new slug
-  by default and require an explicit replacement option instead of only warning
-  before a new repo publishes over it.
+- [x] Prevent accidental replacement of an existing team deck: choose a new slug
+  by default and require `--replace <slug>` to publish over an existing deck.
+  Regression cases run with `pnpm test`; the broader create-A smoke suite above
+  should retain these existing-deck cases.
