@@ -32,7 +32,7 @@ const HELP = `
     --dir <path>             folder to create the deck in (default: ./<name>)
     --github <private|public|none>   the deck's GitHub repo (default: private)
     --team <slug>            the sl-ide cloud team that owns the deck
-    --share <team|public>    who can open its link (default: team)
+    --share <team|public>    team-only initially; enable public sharing on the cloud deck page
     --no-publish             don't set up publishing to sl-ide cloud
     --no-install             skip pnpm install
     --no-open                print the sign-in link instead of opening a browser
@@ -235,16 +235,11 @@ async function create() {
       const avail = await slugAvailable(pub.token, slug);
       if (!avail.available) bail(`Can't publish as ${slug}: ${avail.reason}. Pick another name.`);
       if (avail.exists) p.log.warn(`Team ${pub.team} already has a deck called ${slug}; this one will publish over it.`);
-      if (!o.share && interactive) {
-        share = await ask(p.select({
-          message: 'Who can open its link?',
-          options: [
-            { value: 'team', label: `Team ${pub.team} only`, hint: 'signed in' },
-            { value: 'public', label: 'Anyone with the link' },
-          ],
-        }));
-      }
+      // Publishing never changes privacy. Public sharing is an authenticated
+      // action on the cloud deck page, after the first successful publish.
+      if (share === 'public') p.log.warn('New decks start team-only. After publishing, choose Anyone with the link on the cloud deck page.');
       if (!['team', 'public'].includes(share)) bail('--share is team or public');
+      share = 'team';
     }
   } else if (o.publish && github === 'none') {
     p.log.info('Publishing runs in GitHub Actions, so it is off without a repo.');

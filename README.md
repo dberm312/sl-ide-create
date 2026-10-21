@@ -35,7 +35,7 @@ Then `cd my-deck && pnpm dev`, open Claude Code or Codex there, and run
 --dir <path>                    folder for the deck (default ./<name>)
 --github <private|public|none>  the deck's repo (default private)
 --team <slug>                   the sl-ide cloud team that owns the deck
---share <team|public>           who can open its link (default team)
+--share <team|public>           legacy option; new decks always start team-only
 --no-publish                    skip sl-ide cloud
 --no-install                    skip pnpm install
 --no-open                       print the sign-in link instead of opening it
@@ -52,3 +52,9 @@ you, and can be revoked at sl-ide.com/tokens.
 
 Needs Node 20.12+, git and pnpm, plus the GitHub CLI (`gh`) for the repo
 and publishing.
+
+
+New decks start team-only. After the first publish, open the deck's cloud page
+and save “Anyone with the link” under Sharing to make it public. Publishing
+cannot change sharing settings; `--share public` prints this instruction and
+creates a team-only deck.
