@@ -74,12 +74,36 @@ if (o.memo) o.format = 'memo';
 if (o.help) { console.log(HELP); process.exit(0); }
 
 const interactive = process.stdin.isTTY && !o.yes;
-const bail = (msg) => { p.cancel(msg); process.exit(1); };
+const CONTACT = 'https://sl-ide.com/contact';
+const bail = (msg, { help = true } = {}) => {
+  p.cancel(msg);
+  if (help) console.log(`Stuck? ${CONTACT}`);
+  process.exit(1);
+};
 const ask = async (prompt) => {
   const v = await prompt;
-  if (p.isCancel(v)) bail('Cancelled.');
+  if (p.isCancel(v)) bail('Cancelled.', { help: false });
   return v;
 };
+
+// --- preflight -------------------------------------------------------------
+
+// The deck's editor (Vite) needs Node ^20.19 or >=22.12.
+const nodeOk = ([major, minor]) => (major === 20 ? minor >= 19 : major === 22 ? minor >= 12 : major > 22);
+
+// Everything setup needs, checked before the first question so nobody answers
+// prompts only to stop halfway. Each failure names the command that fixes it.
+function preflight() {
+  if (!nodeOk(process.versions.node.split('.').map(Number))) {
+    bail(`Node ${process.versions.node} is too old; sl-ide needs 20.19+ or 22.12+. Install the current LTS: https://nodejs.org (or: nvm install --lts)`);
+  }
+  if (!has('git')) bail('Git is needed: https://git-scm.com/downloads (macOS: xcode-select --install)');
+  if (!has('pnpm')) bail('pnpm is needed: corepack enable pnpm');
+  if (o.github !== undefined && !['private', 'public', 'none'].includes(o.github)) bail('--github is private, public or none');
+  if (o.github === 'none') return;
+  if (!has('gh')) bail('The GitHub CLI (gh) is needed: https://cli.github.com (macOS: brew install gh), then gh auth login. Or pass --github none.');
+  if (!ghReady()) bail('Sign in to GitHub first: gh auth login (or pass --github none)');
+}
 
 // --- sign-in ---------------------------------------------------------------
 
@@ -173,6 +197,7 @@ function logout() {
 
 async function create() {
   p.intro('sl-ide · new deck');
+  preflight();
 
   // `.` builds the deck in the current folder and names it after the folder.
   // Asked too, when no name is given and this folder is empty.
@@ -222,27 +247,18 @@ async function create() {
     fs.rmSync(path.join(dest, '.DS_Store'), { force: true });
   }
 
-  for (const tool of ['git', 'pnpm']) {
-    if (!has(tool)) bail(tool === 'pnpm' ? 'pnpm is needed: corepack enable pnpm' : 'git is needed');
-  }
-
-  // GitHub repo
+  // GitHub repo (preflight checked gh unless --github none)
   let github = o.github;
-  const gh = ghReady();
   if (!github) {
-    github = !gh ? 'none'
-      : interactive ? await ask(p.select({
-        message: 'GitHub repo for the deck',
-        options: [
-          { value: 'private', label: 'Private', hint: 'recommended' },
-          { value: 'public', label: 'Public' },
-          { value: 'none', label: 'None for now' },
-        ],
-      })) : 'private';
-    if (!gh) p.log.warn('GitHub CLI not signed in (gh auth login), so no repo will be made. Publishing needs one.');
+    github = interactive ? await ask(p.select({
+      message: 'GitHub repo for the deck',
+      options: [
+        { value: 'private', label: 'Private', hint: 'recommended' },
+        { value: 'public', label: 'Public' },
+        { value: 'none', label: 'None for now' },
+      ],
+    })) : 'private';
   }
-  if (!['private', 'public', 'none'].includes(github)) bail('--github is private, public or none');
-  if (github !== 'none' && !gh) bail('gh is not installed or not signed in: gh auth login');
   let owner = null;
   if (github !== 'none') {
     owner = await run('gh', ['api', 'user', '-q', '.login']);

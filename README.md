@@ -4,6 +4,14 @@ Start a slide deck with [sl-ide](https://github.com/dberm312/sl-ide-template),
 the IDE for building slides with Claude Code or Codex.
 Published to npm as `create-sl-ide`, which is what `pnpm create sl-ide` runs.
 
+You'll need:
+
+- Node 20.19+ or 22.12+
+- pnpm (`corepack enable pnpm`)
+- Git
+- The GitHub CLI, signed in (`gh auth login`)
+- Claude Code or Codex
+
 ```sh
 pnpm create sl-ide my-deck
 pnpm create sl-ide my-memo --memo   # a memo on US Letter pages instead of slides
@@ -53,8 +61,10 @@ server that issued it and only ever sent there. `SL_IDE_URL` picks another
 server (https, or http on localhost), which needs its own `login`; decks set up
 against it record it as `url` in `sl-ide.config.json`.
 
-Needs Node 20.12+, git and pnpm, plus the GitHub CLI (`gh`) for the repo
-and publishing.
+Setup checks Node, Git, pnpm and the GitHub CLI before its first question and
+stops with the command that fixes whatever is missing. With `--github none` it
+skips the GitHub check (and publishing, which runs in GitHub Actions). Stuck?
+[sl-ide.com/contact](https://sl-ide.com/contact).
 
 New projects use a fresh cloud slug. If `my-deck` exists, setup tries
 `my-deck-2`, `my-deck-3`, and so on, without changing the folder or repo name.

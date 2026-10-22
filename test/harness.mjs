@@ -48,6 +48,7 @@ const DEFAULT_CLOUD = {
 };
 
 const preloadSource = `import fs from 'node:fs';
+if (process.env.TEST_NODE_VERSION) Object.defineProperty(process.versions, 'node', { value: process.env.TEST_NODE_VERSION });
 const cloud = JSON.parse(process.env.TEST_CLOUD);
 globalThis.fetch = async (url, init = {}) => {
   const { pathname } = new URL(url);
@@ -74,17 +75,20 @@ export const savedCreds = (servers) => ({
 const lines = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);
 
 // creds: saved credentials.json, or null for none. useFormat: whether the
-// cloned template has scripts/use-format.mjs.
-export function sandbox(t, { creds = savedCreds({ [PROD]: { acme: 'fake-token' } }), cloud = {}, fail = [], hang = [], useFormat = true, env = {} } = {}) {
+// cloned template has scripts/use-format.mjs. missing: commands that are not
+// installed (PATH is then only the stubs and `which`). node: the Node version
+// the CLI sees.
+export function sandbox(t, { creds = savedCreds({ [PROD]: { acme: 'fake-token' } }), cloud = {}, fail = [], hang = [], useFormat = true, missing = [], node, env = {} } = {}) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'sl-ide-create-'));
   t.after(() => fs.rmSync(root, { recursive: true, force: true }));
   const bin = path.join(root, 'bin');
   fs.mkdirSync(bin);
-  for (const command of ['git', 'gh', 'pnpm']) {
+  for (const command of ['git', 'gh', 'pnpm'].filter((c) => !missing.includes(c))) {
     // .mjs symlinks preserve ESM parsing while retaining the invoked command name.
     fs.writeFileSync(path.join(bin, `${command}.mjs`), stub, { mode: 0o755 });
     fs.symlinkSync(`${command}.mjs`, path.join(bin, command));
   }
+  if (missing.length) fs.symlinkSync(spawnSync('which', ['which'], { encoding: 'utf8' }).stdout.trim(), path.join(bin, 'which'));
   const conf = path.join(root, 'config');
   const credsFile = path.join(conf, 'sl-ide', 'credentials.json');
   fs.mkdirSync(path.dirname(credsFile), { recursive: true });
@@ -96,13 +100,15 @@ export function sandbox(t, { creds = savedCreds({ [PROD]: { acme: 'fake-token' }
   const files = { commands: path.join(root, 'commands'), fetches: path.join(root, 'fetches'), hung: path.join(root, 'hung') };
 
   const childEnv = {
-    ...process.env, PATH: `${bin}:${process.env.PATH}`, HOME: root, XDG_CONFIG_HOME: conf,
+    ...process.env, PATH: missing.length ? bin : `${bin}:${process.env.PATH}`, HOME: root, XDG_CONFIG_HOME: conf,
     TEST_COMMANDS: files.commands, TEST_FETCHES: files.fetches, TEST_HUNG: files.hung,
     TEST_CLOUD: JSON.stringify({ ...DEFAULT_CLOUD, ...cloud }), TEST_FAIL: JSON.stringify(fail), TEST_HANG: JSON.stringify(hang),
     TEST_USE_FORMAT: useFormat ? '1' : '', ...env,
   };
   // The default cloud is under test; SL_IDE_URL only when a test sets it.
   if (!('SL_IDE_URL' in env)) delete childEnv.SL_IDE_URL;
+  if (node) childEnv.TEST_NODE_VERSION = node;
+  else delete childEnv.TEST_NODE_VERSION;
   delete childEnv.SL_IDE_TEMPLATE;
   const argv = (args) => ['--import', preload, cli, ...args];
   const report = (status, signal, out) => ({

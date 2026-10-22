@@ -57,17 +57,60 @@ test('--github none: no GitHub calls, no publishing, still a working deck', (t) 
   assert.match(r.out, /Not publishing/);
 });
 
-test('gh not signed in: warns and continues without a repo', (t) => {
+// --- preflight -------------------------------------------------------------
+
+test('gh not signed in: stops before the first question with the fix', (t) => {
   const r = sandbox(t, { fail: ['gh auth status'] }).run(['pitch', '--yes', '--no-install']);
-  assert.equal(r.status, 0, r.out);
-  assert.match(r.out, /GitHub CLI not signed in/);
-  assert.ok(!r.ran('gh repo create'));
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /Sign in to GitHub first: gh auth login/);
+  assert.match(r.out, /Stuck\? https:\/\/sl-ide\.com\/contact/);
+  assert.ok(!r.ran('git clone'));
+  assert.deepEqual(r.fetches, []);
 });
 
 test('--github private without gh sign-in stops before cloning', (t) => {
   const r = sandbox(t, { fail: ['gh auth status'] }).run([...PUBLISH, '--github', 'private']);
   assert.equal(r.status, 1, r.out);
   assert.match(r.out, /gh auth login/);
+  assert.ok(!r.ran('git clone'));
+});
+
+test('gh not installed: stops and says how to install it', (t) => {
+  const r = sandbox(t, { missing: ['gh'] }).run(PUBLISH);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /The GitHub CLI \(gh\) is needed: https:\/\/cli\.github\.com/);
+  assert.ok(!r.ran('git clone'));
+});
+
+test('gh not installed is fine with --github none', (t) => {
+  const r = sandbox(t, { missing: ['gh'] }).run([...PUBLISH, '--github', 'none', '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  assert.ok(r.ran('git clone'));
+});
+
+test('pnpm missing: stops with corepack enable pnpm', (t) => {
+  const r = sandbox(t, { missing: ['pnpm'] }).run(PUBLISH);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /pnpm is needed: corepack enable pnpm/);
+  assert.ok(r.commands.length === 0, JSON.stringify(r.commands));
+});
+
+for (const [version, ok] of [['20.11.1', false], ['20.19.0', true], ['21.7.3', false], ['22.11.0', false], ['22.12.0', true], ['24.0.0', true]]) {
+  test(`Node ${version} ${ok ? 'passes' : 'stops'} the preflight`, (t) => {
+    const r = sandbox(t, { node: version }).run([...PUBLISH, '--github', 'none', '--no-install']);
+    if (ok) assert.equal(r.status, 0, r.out);
+    else {
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, new RegExp(`Node ${version.replace(/\./g, '\\.')} is too old; sl-ide needs 20\\.19\\+ or 22\\.12\\+`));
+      assert.ok(!r.ran('git clone'));
+    }
+  });
+}
+
+test('an unknown --github value is rejected before anything runs', (t) => {
+  const r = sandbox(t).run(['pitch', '--yes', '--github', 'bogus']);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /--github is private, public or none/);
   assert.ok(!r.ran('git clone'));
 });
 
