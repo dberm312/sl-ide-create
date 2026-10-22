@@ -1,0 +1,69 @@
+name: Cross-repo smoke
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: cross-repo-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  unit:
+    name: CLI checks
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version: 22
+      - run: corepack enable
+      - run: pnpm install --frozen-lockfile
+      - run: pnpm test
+  smoke:
+    if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
+    name: Cross-repo smoke
+    runs-on: ubuntu-latest
+    timeout-minutes: 35
+    steps:
+      # This job never checks out or executes source. Its token can
+      # access the private cloud, so dispatch and polling remain isolated here.
+      - name: Run shared cloud, template and CLI coverage
+        env:
+          GH_TOKEN: ${{ secrets.CROSS_REPO_CI_TOKEN }}
+          SOURCE_REPOSITORY: ${{ github.repository }}
+          SOURCE_SHA: ${{ github.sha }}
+          SOURCE_RUN_ID: ${{ github.run_id }}-${{ github.run_attempt }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ -z "$GH_TOKEN" ]]; then
+            echo '::error::Set CROSS_REPO_CI_TOKEN with Actions read/write access to dberm312/sl-ide-cloud.'
+            exit 1
+          fi
+          title="Cross-repo $SOURCE_REPOSITORY@$SOURCE_SHA ($SOURCE_RUN_ID)"
+          gh workflow run cross-repo.yml --repo dberm312/sl-ide-cloud --ref main \
+            -f source_repository="$SOURCE_REPOSITORY" -f source_sha="$SOURCE_SHA" -f source_run_id="$SOURCE_RUN_ID"
+          for attempt in $(seq 1 180); do
+            result=$(gh run list --repo dberm312/sl-ide-cloud --workflow cross-repo.yml --event workflow_dispatch \
+              --limit 100 --json displayTitle,status,conclusion,url \
+              --jq ".[] | select(.displayTitle == \"$title\") | [.status, .conclusion, .url] | @tsv" | head -1)
+            if [[ -n "$result" ]]; then
+              IFS=$'\t' read -r status conclusion url <<< "$result"
+              if [[ "$status" == completed ]]; then
+                echo "Shared smoke result: $conclusion ($url)"
+                [[ "$conclusion" == success ]]
+                exit
+              fi
+            fi
+            sleep 10
+          done
+          echo '::error::Timed out waiting for shared cross-repo smoke coverage.'
+          exit 1

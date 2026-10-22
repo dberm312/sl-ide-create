@@ -67,3 +67,25 @@ New decks start team-only. After the first publish, open the deck's cloud page
 (`app.sl-ide.com/decks/my-deck`) and save “Anyone with the link” under Sharing
 to make it public; setup prints this link. Publishing cannot change sharing
 settings.
+
+## Cross-repo CI
+
+The `Cross-repo smoke` workflow dispatches the shared suite in private
+`sl-ide-cloud` and waits for its result. On trusted main pushes, it tests the
+exact CLI commit with the current template and cloud. The shared suite runs
+the real CLI, clones the template with Git, builds slides and memos, prints
+PDFs, publishes them to a disposable cloud and checks the served artifacts.
+Only GitHub commands are replaced with a local bare repository; Clerk and
+Blob use test fixtures. The helper is `test/support/cross-repo.mjs`; cloud owns
+the database/browser fixtures and integration assertions. No production
+credentials or decks are used.
+
+Activation requires repository secret `CROSS_REPO_CI_TOKEN`: a fine-grained
+GitHub token scoped to `dberm312/sl-ide-cloud` with Actions read/write.
+The dispatch job never checks out or executes PR source. Missing secrets,
+failed downstream runs and timeouts fail the check. Public PRs run
+`CLI checks` without the dispatch token. Cross-repo tests run only for trusted
+main commits; cloud validates the SHA against public main before allowing it
+into the private fixture checkout. Configure `CLI checks` as a required PR
+check. Cross-repo activation remains pending until the secret is installed;
+its main-push result must be checked before releasing.
