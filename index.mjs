@@ -33,7 +33,6 @@ const HELP = `
     --github <private|public|none>   the deck's GitHub repo (default: private)
     --team <slug>            the sl-ide cloud team that owns the deck
     --replace <slug>         explicitly publish over an existing deck instead of creating a new slug
-    --share <team|public>    team-only initially; enable public sharing on the cloud deck page
     --no-publish             don't set up publishing to sl-ide cloud
     --no-install             skip pnpm install
     --no-open                print the sign-in link instead of opening a browser
@@ -57,7 +56,6 @@ const { values: o, positionals } = parseArgs({
     github: { type: 'string' },
     team: { type: 'string' },
     replace: { type: 'string' },
-    share: { type: 'string' },
     publish: { type: 'boolean', default: true },
     'no-publish': { type: 'boolean' },
     install: { type: 'boolean', default: true },
@@ -254,10 +252,6 @@ async function create() {
 
   // Publishing
   let pub = null;
-  if (o.share !== undefined && !['team', 'public'].includes(o.share)) bail('--share is team or public');
-  // Publishing never changes privacy. Public sharing is an authenticated
-  // action on the cloud deck page, after the first successful publish.
-  const share = 'team';
   if (o.publish && github !== 'none') {
     pub = await publishCredentials();
     if (pub) {
@@ -270,7 +264,6 @@ async function create() {
       } catch (e) { bail(e.message); }
       if (o.replace !== undefined) p.log.warn(`Explicitly replacing deck ${slug} for team ${pub.team}.`);
       else if (slug !== originalSlug) p.log.info(`Using new deck slug ${slug}; ${originalSlug} is already in use.`);
-      if (o.share === 'public') p.log.warn('New decks start team-only. After publishing, choose Anyone with the link on the cloud deck page.');
     }
   } else if (o.publish && github === 'none') {
     p.log.info('Publishing runs in GitHub Actions, so it is off without a repo.');
@@ -317,10 +310,10 @@ async function create() {
     if (pub) {
       step = 'config';
       // CI publishes to the server the token came from.
-      const config = { slug, team: pub.team, visibility: share, ...(CLOUD === DEFAULT_CLOUD ? {} : { url: CLOUD }) };
+      const config = { slug, team: pub.team, ...(CLOUD === DEFAULT_CLOUD ? {} : { url: CLOUD }) };
       fs.writeFileSync(path.join(dest, 'sl-ide.config.json'), `${JSON.stringify(config, null, 2)}\n`);
       await run('git', ['add', 'sl-ide.config.json'], { cwd: dest });
-      await run('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `Publish to sl-ide cloud as ${slug} (${share}, team ${pub.team})`], { cwd: dest });
+      await run('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `Publish to sl-ide cloud as ${slug} (team ${pub.team})`], { cwd: dest });
     }
 
     if (github !== 'none') {

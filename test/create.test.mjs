@@ -12,7 +12,7 @@ function create(t, { replace, available = true, exists = true, extra = [] } = {}
 test('--yes chooses a fresh slug and writes it into publishing config', (t) => {
   const { result, config, commands } = create(t);
   assert.equal(result.status, 0, result.out);
-  assert.deepEqual(config, { slug: 'pitch-2', team: 'acme', visibility: 'team' });
+  assert.deepEqual(config, { slug: 'pitch-2', team: 'acme' });
   assert.match(commands, /Publish to sl-ide cloud as pitch-2/);
 });
 

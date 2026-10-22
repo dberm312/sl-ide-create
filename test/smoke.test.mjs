@@ -10,7 +10,7 @@ const PUBLISH = ['pitch', '--yes', '--team', 'acme'];
 test('slides: clones, publishes for the team and installs', (t) => {
   const r = sandbox(t).run(PUBLISH);
   assert.equal(r.status, 0, r.out);
-  assert.deepEqual(r.config(), { slug: 'pitch', team: 'acme', visibility: 'team' });
+  assert.deepEqual(r.config(), { slug: 'pitch', team: 'acme' });
   for (const step of ['git clone', 'git remote rename origin upstream', 'gh repo create pitch --private', 'gh secret set SL_IDE_PUBLISH_TOKEN --repo tester/pitch', 'git push -q -u origin main', 'pnpm install']) {
     assert.ok(r.ran(step), `${step} should run:\n${r.out}`);
   }
@@ -24,7 +24,7 @@ test('memo: swaps in the memo starter and commits it before publishing', (t) => 
   assert.equal(r.status, 0, r.out);
   assert.equal(r.file('pitch/format.txt'), 'memo');
   const commits = r.commands.filter((c) => c.includes('commit')).map((c) => c.at(-1));
-  assert.deepEqual(commits, ['Start from the memo starter', 'Publish to sl-ide cloud as pitch (team, team acme)']);
+  assert.deepEqual(commits, ['Start from the memo starter', 'Publish to sl-ide cloud as pitch (team acme)']);
   assert.match(r.out, /outline the memo/);
   assert.match(r.out, /Memo ready\./);
 });
@@ -42,13 +42,6 @@ test('an unknown format is rejected before cloning', (t) => {
   assert.equal(r.status, 1, r.out);
   assert.match(r.out, /--format is slides or memo/);
   assert.ok(!r.ran('git clone'));
-});
-
-test('--share public still starts team-only and says how to share publicly', (t) => {
-  const r = sandbox(t).run([...PUBLISH, '--share', 'public', '--no-install']);
-  assert.equal(r.status, 0, r.out);
-  assert.equal(r.config().visibility, 'team');
-  assert.match(r.out, /New decks start team-only[\s\S]*Anyone with the link/);
 });
 
 // --- skipped steps ---------------------------------------------------------
@@ -203,7 +196,7 @@ test('SL_IDE_URL points every cloud call at another server, with its own token',
     assert.equal(auth, 'Bearer local-a');
   }
   assert.ok(r.ran('gh secret set SL_IDE_PUBLISH_TOKEN'));
-  assert.deepEqual(r.config(), { slug: 'pitch', team: 'acme', visibility: 'team', url: LOCAL });
+  assert.deepEqual(r.config(), { slug: 'pitch', team: 'acme', url: LOCAL });
   assert.match(r.out, /http:\/\/localhost:3000\/d\/pitch\//);
 });
 
