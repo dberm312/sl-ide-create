@@ -2,12 +2,12 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { chooseSlug, SLUG_RE } from '../lib/slug.mjs';
 
-test('fresh slug skips existing decks belonging to this or another team', async () => {
+test('fresh slug skips existing decks belonging to this or another user', async () => {
   const checked = [];
   const slug = await chooseSlug('pitch', { check: async (candidate) => {
     checked.push(candidate);
     if (candidate === 'pitch') return { available: true, exists: true };
-    if (candidate === 'pitch-2') return { available: false, reason: 'another team already has a deck with this name' };
+    if (candidate === 'pitch-2') return { available: false, reason: 'another user already has a deck with this name' };
     return { available: true, exists: false };
   } });
   assert.equal(slug, 'pitch-3');
@@ -25,7 +25,7 @@ test('slugs, suffix included, fit one 63-character DNS label', async () => {
 
 test('replacement requires a valid, existing, authorized target', async () => {
   assert.equal(await chooseSlug('new-repo', { replace: 'pitch', check: async () => ({ available: true, exists: true }) }), 'pitch');
-  for (const result of [{ available: true, exists: false }, { available: false, reason: 'another team already has a deck with this name' }, {}]) {
+  for (const result of [{ available: true, exists: false }, { available: false, reason: 'another user already has a deck with this name' }, {}]) {
     await assert.rejects(chooseSlug('new-repo', { replace: 'pitch', check: async () => result }));
   }
   await assert.rejects(chooseSlug('new-repo', { replace: '../pitch', check: () => assert.fail('must validate before lookup') }));

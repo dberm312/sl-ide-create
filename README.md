@@ -28,7 +28,7 @@ folder, whether to build right there; the repo; publishing), then:
    new deck starts from the template's current `main`.
 2. Creates the deck's own GitHub repo (private by default).
 3. Sets it up to publish to [sl-ide cloud](https://app.sl-ide.com): signs you in
-   through your browser, saves a token for your team, writes
+   through your browser, saves a token for your account, writes
    `sl-ide.config.json` and sets the repo's `SL_IDE_PUBLISH_TOKEN` secret.
    Every push to `main` then updates `app.sl-ide.com/d/my-deck/`.
 4. Runs `pnpm install`.
@@ -42,7 +42,6 @@ Then `cd my-deck && pnpm dev`, open Claude Code or Codex there, and run
 --format <slides|memo>          16:9 slides, or a US Letter memo (default slides; --memo for short)
 --dir <path>                    folder for the deck (default ./<name>)
 --github <private|public|none>  the deck's repo (default private)
---team <slug>                   the sl-ide cloud team that owns the deck
 --replace <slug>                explicitly replace an existing cloud deck
 --no-publish                    skip sl-ide cloud
 --no-install                    skip pnpm install
@@ -51,7 +50,7 @@ Then `cd my-deck && pnpm dev`, open Claude Code or Codex there, and run
 ```
 
 ```sh
-pnpm create sl-ide login     # sign in and save a token for a team
+pnpm create sl-ide login     # sign in and save a token for your account
 pnpm create sl-ide logout    # forget saved tokens (--all: for every server)
 ```
 
@@ -69,12 +68,12 @@ skips the GitHub check (and publishing, which runs in GitHub Actions). Stuck?
 New projects use a fresh cloud slug. If `my-deck` exists, setup tries
 `my-deck-2`, `my-deck-3`, and so on, without changing the folder or repo name.
 This also applies with `--yes`. To intentionally publish over an existing deck,
-use `pnpm create sl-ide new-repo --team acme --replace my-deck`.
+use `pnpm create sl-ide new-repo --replace my-deck`.
 The target must exist and your token must have permission to publish to it.
 Setup checks availability before creating the repo; it does not reserve the slug.
 
-New decks start team-only. After the first publish, open the deck's cloud page
-(`app.sl-ide.com/decks/my-deck`) and save “Anyone with the link” under Sharing
+New decks start restricted. After the first publish, open the deck's cloud page
+(`app.sl-ide.com/decks/my-deck`) and choose Share to add viewers or allow “Anyone with the link”
 to make it public; setup prints this link. Publishing cannot change sharing
 settings.
 

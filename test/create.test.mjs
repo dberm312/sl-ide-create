@@ -5,14 +5,14 @@ import { sandbox } from './harness.mjs';
 // All cloud calls and external commands are local fakes. No repo or deck is published.
 function create(t, { replace, available = true, exists = true, extra = [] } = {}) {
   const box = sandbox(t, { cloud: { slugs: { pitch: { available, exists, reason: 'unauthorized' } } } });
-  const r = box.run(['pitch', '--yes', '--no-install', '--team', 'acme', ...(replace === undefined ? [] : ['--replace', replace]), ...extra]);
+  const r = box.run(['pitch', '--yes', '--no-install', ...(replace === undefined ? [] : ['--replace', replace]), ...extra]);
   return { result: r, config: r.config(), commands: JSON.stringify(r.commands) };
 }
 
 test('--yes chooses a fresh slug and writes it into publishing config', (t) => {
   const { result, config, commands } = create(t);
   assert.equal(result.status, 0, result.out);
-  assert.deepEqual(config, { slug: 'pitch-2', team: 'acme' });
+  assert.deepEqual(config, { slug: 'pitch-2' });
   assert.match(commands, /Publish to sl-ide cloud as pitch-2/);
 });
 

@@ -8,7 +8,7 @@
 // so a new deck always starts from the template's main.
 //
 //   pnpm create sl-ide .         start the deck in this (empty) folder, named after it
-//   pnpm create sl-ide login     sign in to sl-ide cloud and save a team token
+//   pnpm create sl-ide login     sign in to sl-ide cloud and save a publish token
 //   pnpm create sl-ide logout    forget saved tokens for this cloud server
 import fs from 'node:fs';
 import path from 'node:path';
@@ -31,7 +31,6 @@ const HELP = `
     --memo                   short for --format memo
     --dir <path>             folder to create the deck in (default: ./<name>)
     --github <private|public|none>   the deck's GitHub repo (default: private)
-    --team <slug>            the sl-ide cloud team that owns the deck
     --replace <slug>         explicitly publish over an existing deck instead of creating a new slug
     --no-publish             don't set up publishing to sl-ide cloud
     --no-install             skip pnpm install
@@ -40,8 +39,8 @@ const HELP = `
     -h, --help
 
   Commands
-    login                    sign in to sl-ide cloud and save a team token
-    logout [team]            forget saved tokens for this server (--all: every server)
+    login                    sign in to sl-ide cloud and save a publish token
+    logout            forget saved tokens for this server (--all: every server)
 
   Every push to the deck's repo publishes it to ${CLOUD}/d/<slug>/.
   Existing slugs get a numeric suffix unless --replace is explicitly provided.
@@ -54,7 +53,6 @@ const { values: o, positionals } = parseArgs({
     memo: { type: 'boolean' },
     dir: { type: 'string' },
     github: { type: 'string' },
-    team: { type: 'string' },
     replace: { type: 'string' },
     publish: { type: 'boolean', default: true },
     'no-publish': { type: 'boolean' },
@@ -116,44 +114,18 @@ async function signIn() {
       s.start('Waiting for approval');
     },
   }).catch((e) => { s.stop('Sign-in failed'); bail(e.message); });
-  s.stop(`Signed in for team ${got.team}`);
-  saveToken(got.team, got.token);
+  s.stop(`Signed in`);
+  saveToken(got.owner, got.token);
   return got;
 }
 
-// A token for the deck's team on this server: a saved one or a new browser
-// sign-in. Returns { team, token } or null to skip publishing.
+// Reuse this server's signed-in account; no organization selection.
 async function publishCredentials() {
   const saved = readCreds();
-  const teams = Object.keys(saved);
-
-  if (o.team) {
-    if (!SLUG_RE.test(o.team)) bail(`--team "${o.team}" isn't a team slug`);
-    if (saved[o.team]) return { team: o.team, token: saved[o.team].token };
-    p.log.info(`No saved token for team ${o.team}. Sign in to make one.`);
-    const got = await signIn();
-    if (got.team !== o.team) p.log.warn(`You approved team ${got.team}; publishing for that team instead.`);
-    return got;
-  }
-
-  if (!interactive) {
-    if (teams.length === 1) return { team: teams[0], token: saved[teams[0]].token };
-    p.log.warn('Not publishing: pass --team <slug>, or run pnpm create sl-ide login first.');
-    return null;
-  }
-
-  const choice = await ask(p.select({
-    message: 'Publish this deck to sl-ide cloud?',
-    options: [
-      ...teams.map((t) => ({ value: `team:${t}`, label: `Yes, for team ${t}` })),
-      { value: 'login', label: teams.length ? 'Yes, for another team (sign in)' : 'Yes (sign in to sl-ide cloud)', hint: 'opens your browser' },
-      { value: 'skip', label: 'Not now', hint: 'add sl-ide.config.json later' },
-    ],
-  }));
-  if (choice === 'skip') return null;
-  if (choice === 'login') return signIn();
-  const team = choice.slice(5);
-  return { team, token: saved[team].token };
+  if (saved) return saved;
+  if (!interactive) return signIn();
+  const publish = await ask(p.confirm({ message: 'Publish this deck to sl-ide cloud?', initialValue: true }));
+  return publish ? signIn() : null;
 }
 
 // --- recovery --------------------------------------------------------------
@@ -169,7 +141,7 @@ function recoverySteps(step, { rel, here, repo }) {
     case 'repo':
       return [`Check github.com/${repo}. If it was created, delete it:`, `gh repo delete ${repo}`, ...fresh];
     case 'secret':
-      return [`github.com/${repo} exists but can't publish yet.`, `Make a team token at ${CLOUD}/tokens, then:`,
+      return [`github.com/${repo} exists but can't publish yet.`, `Make a publish token at ${CLOUD}/tokens, then:`,
         ...cd, `gh secret set SL_IDE_PUBLISH_TOKEN --repo ${repo}`, 'git push -u origin main'];
     case 'push':
       return [`github.com/${repo} exists. Push the deck to it:`, ...cd, 'git push -u origin main'];
@@ -185,14 +157,12 @@ function recoverySteps(step, { rel, here, repo }) {
 async function login() {
   p.intro('sl-ide cloud');
   await signIn();
-  p.outro(`Saved to ${credsPath} for ${CLOUD}. New decks can publish for this team.`);
+  p.outro(`Saved to ${credsPath} for ${CLOUD}. New decks can publish for your account.`);
 }
 
 function logout() {
-  const team = positionals[1];
-  forget(team, { all: o.all });
-  console.log(o.all ? 'Forgot saved sl-ide tokens for every server.'
-    : team ? `Forgot the token for ${team} on ${CLOUD}.` : `Forgot saved sl-ide tokens for ${CLOUD}.`);
+  forget({ all: o.all });
+  console.log(o.all ? 'Forgot saved sl-ide tokens for every server.' : `Forgot saved sl-ide tokens for ${CLOUD}.`);
 }
 
 async function create() {
@@ -272,13 +242,13 @@ async function create() {
     pub = await publishCredentials();
     if (pub) {
       const ok = await whoami(pub.token);
-      if (!ok) bail(`The saved token for ${pub.team} was rejected (revoked?). Run: pnpm create sl-ide login`);
-      if (ok.team !== pub.team && !ok.admin) bail(`The token saved for ${pub.team} belongs to team ${ok.team}. Run: pnpm create sl-ide login`);
+      if (!ok) bail(`The saved token for ${pub.owner} was rejected (revoked?). Run: pnpm create sl-ide login`);
+      if (ok.owner !== pub.owner) bail('The saved account does not match the token. Run: pnpm create sl-ide login');
       const originalSlug = slug;
       try {
         slug = await chooseSlug(slug, { replace: o.replace, check: (candidate) => slugAvailable(pub.token, candidate) });
       } catch (e) { bail(e.message); }
-      if (o.replace !== undefined) p.log.warn(`Explicitly replacing deck ${slug} for team ${pub.team}.`);
+      if (o.replace !== undefined) p.log.warn(`Explicitly replacing deck ${slug} for your account.`);
       else if (slug !== originalSlug) p.log.info(`Using new deck slug ${slug}; ${originalSlug} is already in use.`);
     }
   } else if (o.publish && github === 'none') {
@@ -326,10 +296,10 @@ async function create() {
     if (pub) {
       step = 'config';
       // CI publishes to the server the token came from.
-      const config = { slug, team: pub.team, ...(CLOUD === DEFAULT_CLOUD ? {} : { url: CLOUD }) };
+      const config = { slug, ...(CLOUD === DEFAULT_CLOUD ? {} : { url: CLOUD }) };
       fs.writeFileSync(path.join(dest, 'sl-ide.config.json'), `${JSON.stringify(config, null, 2)}\n`);
       await run('git', ['add', 'sl-ide.config.json'], { cwd: dest });
-      await run('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `Publish to sl-ide cloud as ${slug} (team ${pub.team})`], { cwd: dest });
+      await run('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `Publish to sl-ide cloud as ${slug}`], { cwd: dest });
     }
 
     if (github !== 'none') {
@@ -370,8 +340,8 @@ async function create() {
   ];
   p.note(lines.join('\n'), 'Next');
   if (pub) {
-    p.log.success(`Every push to main publishes ${CLOUD}/d/${slug}/ (team ${pub.team} only).`);
-    p.log.info(`To share it publicly, open ${CLOUD}/decks/${slug} after the first publish and save Anyone with the link under Sharing.`);
+    p.log.success(`Every push to main publishes ${CLOUD}/d/${slug}/ (restricted).`);
+    p.log.info(`To share it, open ${CLOUD}/decks/${slug} after the first publish. Choose Share to add viewers or allow anyone with the link.`);
   } else {
     p.log.info('Not publishing. To publish later, add sl-ide.config.json (see the deck\'s README).');
   }

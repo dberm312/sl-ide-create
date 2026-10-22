@@ -41,10 +41,10 @@ if (match('TEST_HANG')) {
 // Cloud fixture: per-route { status, json } responses. `slugs` maps a slug to
 // its availability; other slugs are free. `poll` is the device-login poll reply.
 const DEFAULT_CLOUD = {
-  whoami: { status: 200, json: { team: 'acme' } },
+  whoami: { status: 200, json: { owner: 'acme' } },
   slugs: {},
   start: { status: 200, json: { device_code: 'dev-1', user_code: 'ABCD-1234', verification_uri_complete: 'https://app.sl-ide.com/cli?code=ABCD-1234', interval: 0, expires_in: 5 } },
-  poll: { status: 200, json: { team: 'acme', token: 'sli_new' } },
+  poll: { status: 200, json: { owner: 'acme', token: 'sli_new' } },
 };
 
 const preloadSource = `import fs from 'node:fs';
@@ -64,12 +64,13 @@ globalThis.fetch = async (url, init = {}) => {
 `;
 
 export const PROD = 'https://app.sl-ide.com';
-// A credentials.json with `teams` ({ team: token }) saved for each server.
+// Account credentials kept separately for each server.
 export const savedCreds = (servers) => ({
-  version: 2,
-  servers: Object.fromEntries(Object.entries(servers).map(([server, teams]) => [server, {
-    teams: Object.fromEntries(Object.entries(teams).map(([team, token]) => [team, { token }])),
-  }])),
+  version: 3,
+  servers: Object.fromEntries(Object.entries(servers).map(([server, accounts]) => {
+    const [owner, token] = Object.entries(accounts)[0];
+    return [server, { owner, token }];
+  })),
 });
 
 const lines = (file) => (fs.existsSync(file) ? fs.readFileSync(file, 'utf8').trim().split('\n').filter(Boolean).map((l) => JSON.parse(l)) : []);

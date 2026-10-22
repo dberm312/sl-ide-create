@@ -3,14 +3,14 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { alive, PROD, sandbox, savedCreds } from './harness.mjs';
 
-const PUBLISH = ['pitch', '--yes', '--team', 'acme'];
+const PUBLISH = ['pitch', '--yes'];
 
 // --- formats ---------------------------------------------------------------
 
-test('slides: clones, publishes for the team and installs', (t) => {
+test('slides: clones, publishes for the owner and installs', (t) => {
   const r = sandbox(t).run(PUBLISH);
   assert.equal(r.status, 0, r.out);
-  assert.deepEqual(r.config(), { slug: 'pitch', team: 'acme' });
+  assert.deepEqual(r.config(), { slug: 'pitch' });
   for (const step of ['git clone', 'git remote rename origin upstream', 'gh repo create pitch --private', 'gh secret set SL_IDE_PUBLISH_TOKEN --repo tester/pitch', 'git push -q -u origin main', 'pnpm install']) {
     assert.ok(r.ran(step), `${step} should run:\n${r.out}`);
   }
@@ -24,7 +24,7 @@ test('memo: swaps in the memo starter and commits it before publishing', (t) => 
   assert.equal(r.status, 0, r.out);
   assert.equal(r.file('pitch/format.txt'), 'memo');
   const commits = r.commands.filter((c) => c.includes('commit')).map((c) => c.at(-1));
-  assert.deepEqual(commits, ['Start from the memo starter', 'Publish to sl-ide cloud as pitch (team acme)']);
+  assert.deepEqual(commits, ['Start from the memo starter', 'Publish to sl-ide cloud as pitch']);
   assert.match(r.out, /outline the memo/);
   assert.match(r.out, /Memo ready\./);
 });
@@ -130,12 +130,11 @@ test('--no-install: skips pnpm install and lists it as a next step', (t) => {
   assert.match(r.out, /cd pitch\s[\s\S]*pnpm install[\s\S]*pnpm dev/);
 });
 
-test('non-interactive with no saved team skips publishing and says how to start', (t) => {
-  const r = sandbox(t, { creds: null }).run(['pitch', '--yes', '--no-install']);
+test('non-interactive setup signs in without selecting a team', t => {
+  const r = sandbox(t, { creds: null }).run(['pitch', '--yes', '--no-install', '--no-open']);
   assert.equal(r.status, 0, r.out);
-  assert.match(r.out, /pass --team <slug>, or run pnpm create sl-ide login/);
-  assert.equal(r.config(), null);
-  assert.ok(!r.ran('gh secret'));
+  assert.deepEqual(r.config(), { slug: 'pitch' });
+  assert.equal(r.creds.servers[PROD].owner, 'acme');
 });
 
 test('an existing non-empty folder stops before anything runs', (t) => {
@@ -155,42 +154,37 @@ test('a rejected saved token stops before cloning and says to sign in again', (t
   assert.ok(!r.ran('git clone'));
 });
 
-test('an expired sign-in code during setup stops before cloning and saves nothing', (t) => {
-  const r = sandbox(t, { creds: null, cloud: { poll: { status: 410, json: { error: 'expired_token' } } } })
-    .run(['pitch', '--yes', '--team', 'acme', '--no-open']);
+test('an expired sign-in code saves nothing', (t) => {
+  const r = sandbox(t, { creds: null, cloud: { poll: { status: 410, json: {} } } }).run(['login', '--no-open']);
   assert.equal(r.status, 1, r.out);
-  assert.match(r.out, /sign-in code expired; run the command again/);
+  assert.match(r.out, /sign-in code expired/);
   assert.equal(r.creds, null);
-  assert.ok(!r.ran('git clone'));
 });
 
-test('login saves the approved team token privately', (t) => {
+test('login saves the approved account token privately', (t) => {
   const r = sandbox(t, { creds: null }).run(['login', '--no-open']);
   assert.equal(r.status, 0, r.out);
   assert.match(r.out, /ABCD-1234/);
-  assert.equal(r.creds.servers[PROD].teams.acme.token, 'sli_new');
+  assert.equal(r.creds.servers[PROD].token, 'sli_new');
   assert.equal(r.credsMode, 0o600);
 });
 
-test('signing in for --team publishes for the team that was approved', (t) => {
-  const r = sandbox(t, { creds: null, cloud: { poll: { status: 200, json: { team: 'globex', token: 'sli_globex' } }, whoami: { status: 200, json: { team: 'globex' } } } })
-    .run(['pitch', '--yes', '--team', 'acme', '--no-open', '--no-install']);
-  assert.equal(r.status, 0, r.out);
-  assert.match(r.out, /You approved team globex/);
-  assert.equal(r.config().team, 'globex');
+test('--team is no longer accepted', t => {
+  const r = sandbox(t).run(['pitch', '--team', 'acme']);
+  assert.equal(r.status, 1);
+  assert.match(r.out, /Unknown option/);
 });
 
 test('a token that belongs to another team stops before cloning', (t) => {
-  const r = sandbox(t, { cloud: { whoami: { status: 200, json: { team: 'globex' } } } }).run(PUBLISH);
+  const r = sandbox(t, { cloud: { whoami: { status: 200, json: { owner: 'globex' } } } }).run(PUBLISH);
   assert.equal(r.status, 1, r.out);
-  assert.match(r.out, /token saved for acme belongs to team globex/);
+  assert.match(r.out, /saved account does not match the token/);
   assert.ok(!r.ran('git clone'));
 });
 
 test('credentials in an older layout read as none and are never sent', (t) => {
-  const r = sandbox(t, { creds: { url: PROD, teams: { acme: { token: 'old-token' } } } }).run(['pitch', '--yes', '--no-install']);
+  const r = sandbox(t, { creds: { url: PROD, teams: { acme: { token: 'old-token' } } } }).run(['pitch', '--yes', '--no-install', '--no-publish']);
   assert.equal(r.status, 0, r.out);
-  assert.match(r.out, /pass --team <slug>, or run pnpm create sl-ide login/);
   assert.ok(r.fetches.every((f) => f.auth === null), JSON.stringify(r.fetches));
 });
 
@@ -199,13 +193,9 @@ const TWO_SERVERS = savedCreds({ [PROD]: { acme: 'prod-a', globex: 'prod-g' }, [
 
 test('logout forgets tokens for this server only', (t) => {
   const box = sandbox(t, { creds: TWO_SERVERS });
-  const one = box.run(['logout', 'acme']);
-  assert.match(one.out, /Forgot the token for acme on https:\/\/app\.sl-ide\.com/);
-  assert.deepEqual(Object.keys(one.creds.servers[PROD].teams), ['globex']);
-  assert.equal(one.creds.servers[LOCAL].teams.acme.token, 'local-a');
-  const all = box.run(['logout']);
-  assert.equal(all.creds.servers[PROD], undefined);
-  assert.equal(all.creds.servers[LOCAL].teams.acme.token, 'local-a');
+  const result = box.run(['logout']);
+  assert.equal(result.creds.servers[PROD], undefined);
+  assert.equal(result.creds.servers[LOCAL].token, 'local-a');
 });
 
 test('logout --all forgets every server', (t) => {
@@ -216,13 +206,10 @@ test('logout --all forgets every server', (t) => {
 
 // --- cloud domain ----------------------------------------------------------
 
-test('setup and sign-in default to app.sl-ide.com', (t) => {
-  const r = sandbox(t, { creds: null }).run(['pitch', '--yes', '--team', 'acme', '--no-open', '--no-install']);
+test('sign-in defaults to app.sl-ide.com', t => {
+  const r = sandbox(t, { creds: null }).run(['login', '--no-open']);
   assert.equal(r.status, 0, r.out);
-  assert.ok(r.fetches.length >= 3, JSON.stringify(r.fetches));
-  for (const { url } of r.fetches) assert.equal(new URL(url).origin, 'https://app.sl-ide.com');
-  assert.match(r.out, /https:\/\/app\.sl-ide\.com\/cli\?code=ABCD-1234/);
-  assert.match(r.out, /https:\/\/app\.sl-ide\.com\/d\/pitch\//);
+  for (const { url } of r.fetches) assert.equal(new URL(url).origin, PROD);
 });
 
 test('cloud calls never follow redirects', (t) => {
@@ -239,14 +226,13 @@ test('SL_IDE_URL points every cloud call at another server, with its own token',
     assert.equal(auth, 'Bearer local-a');
   }
   assert.ok(r.ran('gh secret set SL_IDE_PUBLISH_TOKEN'));
-  assert.deepEqual(r.config(), { slug: 'pitch', team: 'acme', url: LOCAL });
+  assert.deepEqual(r.config(), { slug: 'pitch', url: LOCAL });
   assert.match(r.out, /http:\/\/localhost:3000\/d\/pitch\//);
 });
 
 test('a production token is never sent to another server', (t) => {
-  const r = sandbox(t, { env: { SL_IDE_URL: LOCAL } }).run(['pitch', '--yes', '--no-install']);
+  const r = sandbox(t, { env: { SL_IDE_URL: LOCAL } }).run(['pitch', '--yes', '--no-install', '--no-publish']);
   assert.equal(r.status, 0, r.out);
-  assert.match(r.out, /pass --team <slug>, or run pnpm create sl-ide login/);
   assert.ok(r.fetches.every((f) => f.auth === null), JSON.stringify(r.fetches));
   assert.ok(!r.ran('gh secret'));
 });
@@ -254,8 +240,8 @@ test('a production token is never sent to another server', (t) => {
 test('signing in on another server saves the token for that server', (t) => {
   const r = sandbox(t, { env: { SL_IDE_URL: LOCAL } }).run(['login', '--no-open']);
   assert.equal(r.status, 0, r.out);
-  assert.equal(r.creds.servers[LOCAL].teams.acme.token, 'sli_new');
-  assert.equal(r.creds.servers[PROD].teams.acme.token, 'fake-token');
+  assert.equal(r.creds.servers[LOCAL].token, 'sli_new');
+  assert.equal(r.creds.servers[PROD].token, 'fake-token');
 });
 
 for (const bad of ['http://staging.example.com', 'https://user:pw@app.sl-ide.com', 'not a url']) {
@@ -274,7 +260,7 @@ test('a failed clone says nothing reached GitHub and how to start over', (t) => 
   const r = sandbox(t, { fail: ['git clone'] }).run(PUBLISH);
   assert.equal(r.status, 1, r.out);
   assert.match(r.out, /Nothing was created on GitHub/);
-  assert.match(r.out, /Delete pitch, then run:[\s│]*pnpm create sl-ide pitch --yes --team acme/);
+  assert.match(r.out, /Delete pitch, then run:[\s│]*pnpm create sl-ide pitch --yes/);
 });
 
 test('a failed repo create asks to check GitHub before starting over', (t) => {
@@ -308,9 +294,9 @@ test('a failed install leaves a published deck and says to install', (t) => {
 
 test('in-place setup recovery says to empty the folder, not cd', (t) => {
   const box = sandbox(t, { fail: ['git clone'] });
-  const r = box.run(['.', '--yes', '--team', 'acme']);
+  const r = box.run(['.', '--yes']);
   assert.equal(r.status, 1, r.out);
-  assert.match(r.out, /Empty this folder, then run:[\s│]*pnpm create sl-ide \. --yes --team acme/);
+  assert.match(r.out, /Empty this folder, then run:[\s│]*pnpm create sl-ide \. --yes/);
 });
 
 for (const [step, signal, code, recovery] of [
