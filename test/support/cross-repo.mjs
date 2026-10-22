@@ -26,8 +26,8 @@ export async function runCreateSmoke({ base, token, owner, templateDir, format =
     SMOKE_REMOTE: remote, SMOKE_SECRET: secret,
     ...(process.env.CHROME ? { CHROME: process.env.CHROME } : {}),
   };
-  const run = (command, args, cwd = work) => new Promise((resolve, reject) => {
-    execFile(command, args, { cwd, env, timeout: 120_000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
+  const run = (command, args, cwd = work, extraEnv = {}) => new Promise((resolve, reject) => {
+    execFile(command, args, { cwd, env: { ...env, ...extraEnv }, timeout: 120_000, maxBuffer: 4 * 1024 * 1024 }, (error, stdout, stderr) => {
       if (error) reject(new Error(`${command} ${args.join(' ')} failed: ${stdout}\n${stderr}`));
       else resolve(stdout.trim());
     });
@@ -62,7 +62,10 @@ else process.exit(2);
     // Install into the real clone: pnpm rejects a node_modules symlink outside
     // the project, and a real install also checks the generated lockfile flow.
     await run('pnpm', ['install', '--frozen-lockfile'], deck);
-    await run('pnpm', ['pdf'], deck);
+    // macOS Chrome's sandbox cannot load pages with a fabricated HOME.
+    // The template gives Chrome a disposable profile; CLI credentials and
+    // config remain isolated under XDG_CONFIG_HOME throughout this test.
+    await run('pnpm', ['pdf'], deck, process.platform === 'darwin' ? { HOME: os.homedir() } : {});
     env.SL_IDE_PUBLISH_TOKEN = await fs.readFile(secret, 'utf8');
     env.GITHUB_SHA = sha;
     env.GITHUB_REF_NAME = 'main';
