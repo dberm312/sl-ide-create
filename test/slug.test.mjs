@@ -14,12 +14,13 @@ test('fresh slug skips existing decks belonging to this or another team', async 
   assert.deepEqual(checked, ['pitch', 'pitch-2', 'pitch-3']);
 });
 
-test('suffixes stay valid at the maximum slug length', async () => {
+test('slugs, suffix included, fit one 63-character DNS label', async () => {
   const base = `${'a'.repeat(61)}-aa`;
-  const slug = await chooseSlug(base, { check: async (candidate) => ({ available: true, exists: candidate === base }) });
-  assert.equal(slug.length, 63);
+  const checked = [];
+  const slug = await chooseSlug(base, { check: async (candidate) => { checked.push(candidate); return { available: true, exists: checked.length === 1 }; } });
+  assert.deepEqual(checked.map((c) => c.length), [63, 63]);
+  assert.equal(slug, `${'a'.repeat(61)}-2`);
   assert.ok(SLUG_RE.test(slug));
-  assert.ok(slug.endsWith('-2'));
 });
 
 test('replacement requires a valid, existing, authorized target', async () => {
