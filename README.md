@@ -87,5 +87,6 @@ failed downstream runs and timeouts fail the check. Public PRs run
 `CLI checks` without the dispatch token. Cross-repo tests run only for trusted
 main commits; cloud validates the SHA against public main before allowing it
 into the private fixture checkout. Configure `CLI checks` as a required PR
-check. Cross-repo activation remains pending until the secret is installed;
-its main-push result must be checked before releasing.
+check. Remaining activation is tracked in
+[SL-38](https://linear.app/sl-ide/issue/SL-38/activate-hosted-staging-and-cross-repo-ci-enforcement);
+the secret must be installed and its main-push result checked before releasing.
