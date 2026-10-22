@@ -136,13 +136,31 @@ export function sandbox(t, { creds = savedCreds({ [PROD]: { acme: 'fake-token' }
       const until = Date.now() + 10000;
       while (!fs.existsSync(files.hung) && Date.now() < until) await new Promise((r) => setTimeout(r, 20));
       if (!fs.existsSync(files.hung)) { child.kill('SIGKILL'); throw new Error(`never reached the hung command:\n${out}`); }
+      const hungPid = Number(fs.readFileSync(files.hung, 'utf8'));
       child.kill(signal);
       const [status, sig] = await closed;
-      return { ...report(status, sig, out), hungPid: Number(fs.readFileSync(files.hung, 'utf8')) };
+      // The CLI sends SIGTERM from its exit hook. Its own close event need
+      // not wait for the OS to schedule the command's termination and reaping.
+      // Observe the process becoming stopped rather than assuming that ordering.
+      const stoppedBy = Date.now() + 5000;
+      while (alive(hungPid) && Date.now() < stoppedBy) await new Promise((r) => setTimeout(r, 10));
+      return { ...report(status, sig, out), hungPid };
     },
   };
 }
 
 export const alive = (pid) => {
-  try { process.kill(pid, 0); return true; } catch { return false; }
+  try {
+    process.kill(pid, 0);
+    // On Linux an orphan can remain a zombie until init reaps it. It has
+    // already exited and cannot execute commands, but kill(pid, 0) succeeds.
+    if (process.platform === 'linux') {
+      const stat = fs.readFileSync(`/proc/${pid}/stat`, 'utf8');
+      return stat.slice(stat.lastIndexOf(')') + 2).split(' ')[0] !== 'Z';
+    }
+    return true;
+  } catch (error) {
+    if (error.code === 'ESRCH' || error.code === 'ENOENT') return false;
+    throw error;
+  }
 };
