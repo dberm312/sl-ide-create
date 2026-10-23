@@ -289,7 +289,7 @@ async function create() {
       }
       await run('node', ['scripts/use-format.mjs', format], { cwd: dest });
       await run('git', ['add', '-A'], { cwd: dest });
-      await run('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `Start from the ${format} starter`], { cwd: dest });
+      await run('git', ['commit', '-q', '-m', `Start from the ${format} starter`], { cwd: dest });
       p.log.success(`Set up as a ${format}`);
     }
 
@@ -299,7 +299,7 @@ async function create() {
       const config = { slug, ...(CLOUD === DEFAULT_CLOUD ? {} : { url: CLOUD }) };
       fs.writeFileSync(path.join(dest, 'sl-ide.config.json'), `${JSON.stringify(config, null, 2)}\n`);
       await run('git', ['add', 'sl-ide.config.json'], { cwd: dest });
-      await run('git', ['-c', 'core.hooksPath=/dev/null', 'commit', '-q', '-m', `Publish to sl-ide cloud as ${slug}`], { cwd: dest });
+      await run('git', ['commit', '-q', '-m', `Publish to sl-ide cloud as ${slug}`], { cwd: dest });
     }
 
     if (github !== 'none') {
