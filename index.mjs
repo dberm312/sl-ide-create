@@ -11,6 +11,7 @@
 //   pnpm create sl-ide login     sign in to sl-ide cloud and save a publish token
 //   pnpm create sl-ide logout    forget saved tokens for this cloud server
 import fs from 'node:fs';
+import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import * as p from '@clack/prompts';
@@ -31,6 +32,7 @@ const HELP = `
     --memo                   short for --format memo
     --dir <path>             folder to create the deck in (default: ./<name>)
     --github <private|public|none>   the deck's GitHub repo (default: private)
+    --feedback <auto|off>    automatic anonymous usage feedback (default: off)
     --replace <slug>         explicitly publish over an existing deck instead of creating a new slug
     --no-publish             don't set up publishing to sl-ide cloud
     --no-install             skip pnpm install
@@ -53,6 +55,7 @@ const { values: o, positionals } = parseArgs({
     memo: { type: 'boolean' },
     dir: { type: 'string' },
     github: { type: 'string' },
+    feedback: { type: 'string' },
     replace: { type: 'string' },
     publish: { type: 'boolean', default: true },
     'no-publish': { type: 'boolean' },
@@ -167,6 +170,7 @@ function logout() {
 
 async function create() {
   p.intro('sl-ide · new deck');
+  if (o.feedback !== undefined && !['auto','off'].includes(o.feedback)) bail('--feedback is auto or off');
   preflight();
 
   // `.` builds the deck in the current folder and names it after the folder.
@@ -236,6 +240,15 @@ async function create() {
     if (exists) bail(`github.com/${owner}/${name} already exists`);
   }
 
+  let feedback = o.feedback;
+  if (!feedback) {
+    feedback = interactive ? await ask(p.select({
+      message: 'Send anonymous usage feedback automatically? It sends how sl-ide was used, never your content.',
+      initialValue: 'off',
+      options: [{ value: 'off', label: 'Off', hint: 'default' }, { value: 'auto', label: 'Auto' }],
+    })) : 'off';
+  }
+
   // Publishing
   let pub = null;
   if (o.publish && github !== 'none') {
@@ -281,6 +294,16 @@ async function create() {
     await run('git', ['config', 'pull.rebase', 'false'], { cwd: dest });
     const head = await run('git', ['log', '-1', '--format=%h %s'], { cwd: dest });
     s.stop(`Cloned sl-ide (${head.split(' ')[0]})`);
+
+    // Local consent only, never committed or derived from a deck identifier.
+    fs.mkdirSync(path.join(dest, '.sl-ide'), { recursive: true, mode: 0o700 });
+    // Also protect the ID when cloning an older template without the ignore rule.
+    const ignore = path.join(dest, '.gitignore');
+    const ignored = fs.existsSync(ignore) ? fs.readFileSync(ignore, 'utf8') : '';
+    if (!ignored.split('\n').includes('.sl-ide/')) fs.appendFileSync(ignore, '\n.sl-ide/\n');
+    fs.writeFileSync(path.join(dest, '.sl-ide/feedback.json'), JSON.stringify({
+      version: 1, auto: feedback === 'auto', projectId: `fb_${randomUUID()}`,
+    }, null, 2) + '\n', { mode: 0o600 });
 
     if (format !== 'slides') {
       step = 'format';

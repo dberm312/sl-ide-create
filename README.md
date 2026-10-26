@@ -42,6 +42,7 @@ Then `cd my-deck && pnpm dev`, open Claude Code or Codex there, and run
 --format <slides|memo>          16:9 slides, or a US Letter memo (default slides; --memo for short)
 --dir <path>                    folder for the deck (default ./<name>)
 --github <private|public|none>  the deck's repo (default private)
+--feedback <auto|off>          automatic anonymous usage feedback (default off)
 --replace <slug>                explicitly replace an existing cloud deck
 --no-publish                    skip sl-ide cloud
 --no-install                    skip pnpm install
@@ -99,3 +100,22 @@ into the private fixture checkout. `CLI checks` is a required check on `main`,
 and the secret is installed
 ([SL-38](https://linear.app/sl-ide/issue/SL-38/activate-hosted-staging-and-cross-repo-ci-enforcement)).
 Check the main-push result before releasing.
+
+## Anonymous harness feedback
+
+Feedback is off by default, including with `-y`. Choose Auto during setup or use
+`pnpm create sl-ide my-deck --feedback auto`; `--feedback off` keeps it off.
+Reports describe harness behavior, audit counts and workarounds, never deck copy,
+names or file contents. A random project ID lives only in gitignored
+`.sl-ide/feedback.json`; a fresh clone gets a new ID.
+
+In a deck, `pnpm feedback on` / `off` toggles automatic reports. `status` shows
+settings and the endpoint; `log` shows queued and sent JSON. `/give-feedback`
+previews a manual report and asks “Send?” even when automatic feedback is off.
+`DO_NOT_TRACK=1` or `SL_IDE_FEEDBACK=0` blocks every delivery.
+`SL_IDE_FEEDBACK_DEBUG=1` prints scrubbed payloads locally without sending.
+
+Reports are scrubbed before being saved to `.sl-ide/outbox/`, and again before
+retrying. Delivery times out after five seconds. Failed deliveries stay queued
+(up to 20 reports) for a later run; successful ones move to `.sl-ide/sent/`.
+Existing decks get the scripts through `/update-sl-ide` and stay opted out.
