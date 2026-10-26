@@ -1,6 +1,6 @@
 {
   "name": "create-sl-ide",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "Start a slide deck with sl-ide: pnpm create sl-ide",
   "type": "module",
   "scripts": {
