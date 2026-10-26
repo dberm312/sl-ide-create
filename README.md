@@ -60,6 +60,12 @@ server that issued it and only ever sent there. `SL_IDE_URL` picks another
 server (https, or http on localhost), which needs its own `login`; decks set up
 against it record it as `url` in `sl-ide.config.json`.
 
+Each request to the server has a deadline (`SL_IDE_REQUEST_TIMEOUT_MS`,
+default 30 s). Token checks are tried again after a timeout, a lost connection,
+408, 429 or 5xx; a refused token is not. The sign-in token arrives in exactly
+one answer, so if that answer is lost the CLI says to run `login` again rather
+than polling on.
+
 Setup checks Node, Git, pnpm and the GitHub CLI before its first question and
 stops with the command that fixes whatever is missing. With `--github none` it
 skips the GitHub check (and publishing, which runs in GitHub Actions). Stuck?

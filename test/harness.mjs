@@ -38,28 +38,47 @@ if (match('TEST_HANG')) {
 }
 `;
 
-// Cloud fixture: per-route { status, json } responses. `slugs` maps a slug to
-// its availability; other slugs are free. `poll` is the device-login poll reply.
+// Cloud fixture: per-route { status, json, headers } responses. `slugs` maps a
+// slug to its availability; other slugs are free. `poll` is the device-login
+// poll reply. A route's reply may be a list, answered in order (the last one
+// repeats). { hang: true } never answers (until the request's deadline aborts
+// it); { drop: true } fails as a lost connection does.
+export const DEFAULT_START = { status: 200, json: { device_code: 'dev-1', user_code: 'ABCD-1234', verification_uri_complete: 'https://app.sl-ide.com/cli?code=ABCD-1234', interval: 0, expires_in: 5 } };
 const DEFAULT_CLOUD = {
   whoami: { status: 200, json: { owner: 'acme' } },
   slugs: {},
-  start: { status: 200, json: { device_code: 'dev-1', user_code: 'ABCD-1234', verification_uri_complete: 'https://app.sl-ide.com/cli?code=ABCD-1234', interval: 0, expires_in: 5 } },
+  start: DEFAULT_START,
   poll: { status: 200, json: { owner: 'acme', token: 'sli_new' } },
 };
 
 const preloadSource = `import fs from 'node:fs';
 if (process.env.TEST_NODE_VERSION) Object.defineProperty(process.versions, 'node', { value: process.env.TEST_NODE_VERSION });
 const cloud = JSON.parse(process.env.TEST_CLOUD);
+const seen = {};
+const next = (name, reply) => {
+  if (!Array.isArray(reply)) return reply;
+  const n = seen[name] = (seen[name] ?? -1) + 1;
+  return reply[Math.min(n, reply.length - 1)];
+};
 globalThis.fetch = async (url, init = {}) => {
   const { pathname } = new URL(url);
   const auth = init.headers?.Authorization ?? null;
-  fs.appendFileSync(process.env.TEST_FETCHES, JSON.stringify({ url: String(url), method: init.method || 'GET', auth, redirect: init.redirect ?? 'follow' }) + '\\n');
-  const reply = pathname === '/api/cli/whoami' ? cloud.whoami
-    : pathname === '/api/cli/login/start' ? cloud.start
-    : pathname === '/api/cli/login/poll' ? cloud.poll
+  fs.appendFileSync(process.env.TEST_FETCHES, JSON.stringify({ url: String(url), method: init.method || 'GET', auth, redirect: init.redirect ?? 'follow', deadline: init.signal instanceof AbortSignal }) + '\\n');
+  const reply = pathname === '/api/cli/whoami' ? next('whoami', cloud.whoami)
+    : pathname === '/api/cli/login/start' ? next('start', cloud.start)
+    : pathname === '/api/cli/login/poll' ? next('poll', cloud.poll)
     : pathname.startsWith('/api/cli/slug/') ? { status: 200, json: cloud.slugs[pathname.split('/').at(-1)] ?? { available: true, exists: false } }
     : { status: 404, json: {} };
-  return { ok: reply.status >= 200 && reply.status < 300, status: reply.status, json: async () => reply.json };
+  if (reply.hang) {
+    return new Promise((_, reject) => {
+      const keepAlive = setInterval(() => {}, 1000);
+      init.signal?.addEventListener('abort', () => { clearInterval(keepAlive); reject(init.signal.reason); });
+    });
+  }
+  if (reply.drop) throw new TypeError('fetch failed', { cause: new Error('other side closed') });
+  const headers = new Headers(reply.headers ?? {});
+  const text = JSON.stringify(reply.json ?? {});
+  return { ok: reply.status >= 200 && reply.status < 300, status: reply.status, headers, text: async () => text, json: async () => JSON.parse(text) };
 };
 `;
 
