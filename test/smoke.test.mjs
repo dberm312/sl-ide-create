@@ -1,7 +1,7 @@
 // create-A: setup variants, expired credentials, interruption and recovery.
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { alive, PROD, sandbox, savedCreds } from './harness.mjs';
+import { alive, DEFAULT_START, PROD, sandbox, savedCreds } from './harness.mjs';
 
 const PUBLISH = ['pitch', '--yes'];
 
@@ -157,7 +157,8 @@ test('a rejected saved token stops before cloning and says to sign in again', (t
 test('an expired sign-in code saves nothing', (t) => {
   const r = sandbox(t, { creds: null, cloud: { poll: { status: 410, json: {} } } }).run(['login', '--no-open']);
   assert.equal(r.status, 1, r.out);
-  assert.match(r.out, /sign-in code expired/);
+  assert.match(r.out, /sign-in code expired; run the command again/);
+  assert.equal(r.fetches.filter((f) => f.url.endsWith('/api/cli/login/poll')).length, 1);
   assert.equal(r.creds, null);
 });
 
@@ -167,6 +168,104 @@ test('login saves the approved account token privately', (t) => {
   assert.match(r.out, /ABCD-1234/);
   assert.equal(r.creds.servers[PROD].token, 'sli_new');
   assert.equal(r.credsMode, 0o600);
+});
+
+// --- slow, failed and lost cloud answers ----------------------------------
+
+const FAST = { SL_IDE_REQUEST_TIMEOUT_MS: '200', SL_IDE_RETRY_BACKOFF_MS: '1' };
+const calls = (r, route) => r.fetches.filter((f) => new URL(f.url).pathname === route);
+
+test('every cloud call carries a deadline', (t) => {
+  const setup = sandbox(t).run([...PUBLISH, '--no-install']);
+  const login = sandbox(t, { creds: null }).run(['login', '--no-open']);
+  for (const r of [setup, login]) {
+    assert.equal(r.status, 0, r.out);
+    assert.ok(r.fetches.length > 0);
+    for (const f of r.fetches) assert.equal(f.deadline, true, JSON.stringify(f));
+  }
+});
+
+test('a cloud that never answers the token check stops before cloning, without calling the token revoked', (t) => {
+  const r = sandbox(t, { cloud: { whoami: { hang: true } }, env: FAST }).run(PUBLISH);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /could not reach https:\/\/app\.sl-ide\.com \(no answer within/);
+  assert.doesNotMatch(r.out, /rejected/);
+  assert.equal(calls(r, '/api/cli/whoami').length, 3);
+  assert.ok(!r.ran('git clone'));
+  assert.equal(r.creds.servers[PROD].token, 'fake-token');
+});
+
+test('a failed token check is tried again', (t) => {
+  const r = sandbox(t, { cloud: { whoami: [{ status: 503, json: {} }, { drop: true }, { status: 200, json: { owner: 'acme' } }] }, env: FAST }).run([...PUBLISH, '--no-install']);
+  assert.equal(r.status, 0, r.out);
+  assert.equal(calls(r, '/api/cli/whoami').length, 3);
+});
+
+test('a refused token is not asked about again', (t) => {
+  for (const status of [401, 403, 404]) {
+    const r = sandbox(t, { cloud: { whoami: { status, json: { error: 'unauthorized' } } }, env: FAST }).run(PUBLISH);
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /token for acme was rejected/);
+    assert.equal(calls(r, '/api/cli/whoami').length, 1, `HTTP ${status}`);
+  }
+});
+
+test('a lost answer to starting sign-in is tried once more', (t) => {
+  const r = sandbox(t, { creds: null, cloud: { start: [{ drop: true }, DEFAULT_START] }, env: FAST }).run(['login', '--no-open']);
+  assert.equal(r.status, 0, r.out);
+  assert.equal(calls(r, '/api/cli/login/start').length, 2);
+  assert.equal(r.creds.servers[PROD].token, 'sli_new');
+});
+
+test('too many sign-ins in progress stops with the cloud\'s reason, without retrying past Retry-After', (t) => {
+  const busy = { status: 429, headers: { 'Retry-After': '600' }, json: { error: 'too many sign-ins in progress; try again in a few minutes' } };
+  const r = sandbox(t, { creds: null, cloud: { start: busy }, env: FAST }).run(['login', '--no-open']);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /too many sign-ins in progress/);
+  assert.equal(calls(r, '/api/cli/login/start').length, 1);
+  assert.equal(calls(r, '/api/cli/login/poll').length, 0);
+});
+
+test('a short Retry-After on starting sign-in is waited out', (t) => {
+  const r = sandbox(t, { creds: null, cloud: { start: [{ status: 429, headers: { 'Retry-After': '0' }, json: {} }, DEFAULT_START] }, env: FAST }).run(['login', '--no-open']);
+  assert.equal(r.status, 0, r.out);
+  assert.equal(calls(r, '/api/cli/login/start').length, 2);
+});
+
+test('a slow poll times out and polling continues until the token arrives', (t) => {
+  const r = sandbox(t, { creds: null, cloud: { poll: [{ status: 202, json: {} }, { hang: true }, { status: 429, json: {} }, { status: 200, json: { owner: 'acme', token: 'sli_new' } }] }, env: FAST }).run(['login', '--no-open']);
+  assert.equal(r.status, 0, r.out);
+  assert.equal(calls(r, '/api/cli/login/poll').length, 4);
+  assert.equal(r.creds.servers[PROD].token, 'sli_new');
+});
+
+test('a lost token answer says to sign in again instead of polling on', (t) => {
+  // The cloud sent the token (and deleted the sign-in), but the answer never
+  // arrived; the next poll can only say the code is gone.
+  for (const lost of [{ drop: true }, { hang: true }, { status: 502, json: {} }]) {
+    const r = sandbox(t, { creds: null, cloud: { poll: [{ status: 202, json: {} }, lost, { status: 410, json: { status: 'expired' } }] }, env: FAST }).run(['login', '--no-open']);
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /answer was lost on the way, and a token is only sent once\. Run the command again/, JSON.stringify(lost));
+    assert.match(r.out, /https:\/\/app\.sl-ide\.com\/tokens/);
+    assert.equal(calls(r, '/api/cli/login/poll').length, 3);
+    assert.equal(r.creds, null);
+  }
+});
+
+test('polling gives up on a cloud that stops answering', (t) => {
+  const r = sandbox(t, { creds: null, cloud: { poll: [{ status: 202, json: {} }, { drop: true }] }, env: FAST }).run(['login', '--no-open']);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /answer was lost/);
+  assert.equal(calls(r, '/api/cli/login/poll').length, 6);
+  assert.equal(r.creds, null);
+});
+
+test('a refused poll stops at once', (t) => {
+  const r = sandbox(t, { creds: null, cloud: { poll: { status: 400, json: { error: 'need device_code' } } }, env: FAST }).run(['login', '--no-open']);
+  assert.equal(r.status, 1, r.out);
+  assert.match(r.out, /sign-in failed: need device_code/);
+  assert.equal(calls(r, '/api/cli/login/poll').length, 1);
+  assert.equal(r.creds, null);
 });
 
 test('--team is no longer accepted', t => {

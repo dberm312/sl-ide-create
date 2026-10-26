@@ -254,7 +254,7 @@ async function create() {
   if (o.publish && github !== 'none') {
     pub = await publishCredentials();
     if (pub) {
-      const ok = await whoami(pub.token);
+      const ok = await whoami(pub.token).catch((e) => bail(`Couldn't check the saved token: ${e.message}. Nothing has been created yet; try again.`));
       if (!ok) bail(`The saved token for ${pub.owner} was rejected (revoked?). Run: pnpm create sl-ide login`);
       if (ok.owner !== pub.owner) bail('The saved account does not match the token. Run: pnpm create sl-ide login');
       const originalSlug = slug;
