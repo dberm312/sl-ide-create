@@ -5,7 +5,7 @@ import assert from 'node:assert/strict';
 import { sandbox } from './harness.mjs';
 
 // Every sandbox is its own home, so a file's tests run concurrently.
-describe('defaults', { concurrency: true }, () => {
+describe('defaults', { concurrency: 8 }, () => {
 
   const PUBLISH = ['pitch', '--yes', '--no-install'];
 

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { sandbox } from './harness.mjs';
 
 // Every sandbox is its own home, so a file's tests run concurrently.
-describe('feedback', { concurrency: true }, () => {
+describe('feedback', { concurrency: 8 }, () => {
   const args = ['pitch','--yes','--no-install','--no-publish','--github','none'];
   for (const [option,auto] of [[[],false],[['--feedback','off'],false],[['--feedback','auto'],true]]) {
     test(`feedback consent ${option.join(' ')||'defaults off'}`,async t=>{

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { sandbox } from './harness.mjs';
 
 // Every sandbox is its own home, so a file's tests run concurrently.
-describe('create', { concurrency: true }, () => {
+describe('create', { concurrency: 8 }, () => {
 
   // All cloud calls and external commands are local fakes. No repo or deck is published.
   async function create(t, { replace, available = true, exists = true, extra = [] } = {}) {

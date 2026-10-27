@@ -4,7 +4,8 @@ import assert from 'node:assert/strict';
 import { alive, DEFAULT_START, PROD, sandbox, savedCreds } from './harness.mjs';
 
 // Every sandbox is its own home, so a file's tests run concurrently.
-describe('smoke', { concurrency: true }, () => {
+// Bound child-process bursts so local runs keep the existing 15-second deadline.
+describe('smoke', { concurrency: 8 }, () => {
 
   const PUBLISH = ['pitch', '--yes'];
 
