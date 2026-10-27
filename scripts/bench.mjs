@@ -102,20 +102,23 @@ const commands = bench(root, 'now');
 const report = { date: new Date().toISOString(), runs, machine, commands, ...(base && { baseline: { label: base.label, machine: base.machine, commands: base.commands } }) };
 fs.mkdirSync(path.join(root, 'output'), { recursive: true });
 fs.writeFileSync(path.join(root, 'output/bench.json'), `${JSON.stringify(report, null, 2)}\n`);
-if (save) fs.writeFileSync(path.join(root, 'bench/baseline.json'), `${JSON.stringify({ date: report.date, machine, commands: Object.fromEntries(Object.entries(commands).map(([k, { median_ms, min_ms }]) => [k, { median_ms, min_ms }])) }, null, 2)}\n`);
+const failed = Object.values(commands).some((r) => !r.ok) || Object.values(base?.commands ?? {}).some((r) => r.ok === false);
+if (save && failed) console.error('error: refusing to save a baseline because a benchmark command failed');
+if (save && !failed) fs.writeFileSync(path.join(root, 'bench/baseline.json'), `${JSON.stringify({ date: report.date, machine, commands: Object.fromEntries(Object.entries(commands).map(([k, { median_ms, min_ms }]) => [k, { median_ms, min_ms }])) }, null, 2)}\n`);
 
 const s = (msVal) => (msVal === undefined ? '—' : `${(msVal / 1000).toFixed(2)} s`);
 const rows = names.map((n) => {
   const now = commands[n].median_ms;
   const was = base?.commands[n]?.median_ms;
-  const ratio = was ? was / now : undefined;
-  return { n, now, was, ratio, ok: commands[n].ok };
+  const baselineOk = base?.commands[n]?.ok !== false;
+  const ratio = was && commands[n].ok && baselineOk ? was / now : undefined;
+  return { n, now, was, ratio, baselineOk, ok: commands[n].ok };
 });
 const table = [
   base ? `| command | ${base.label} | now | speedup |` : '| command | median | min |',
   base ? '|---|---:|---:|---:|' : '|---|---:|---:|',
   ...rows.map((r) => (base
-    ? `| ${r.n} | ${s(r.was)} | ${s(r.now)}${r.ok ? '' : ' (failed)'} | ${r.ratio ? `${r.ratio.toFixed(2)}x` : '—'} |`
+    ? `| ${r.n} | ${s(r.was)}${r.baselineOk ? '' : ' (failed)'} | ${s(r.now)}${r.ok ? '' : ' (failed)'} | ${r.ratio ? `${r.ratio.toFixed(2)}x` : '—'} |`
     : `| ${r.n} | ${s(r.now)}${r.ok ? '' : ' (failed)'} | ${s(commands[r.n].min_ms)} |`)),
 ].join('\n');
 console.log(`\n${table}`);
@@ -131,4 +134,4 @@ for (const r of rows) {
   }
 }
 if (process.env.GITHUB_STEP_SUMMARY) fs.appendFileSync(process.env.GITHUB_STEP_SUMMARY, `\n### Bench (${runs} run${runs > 1 ? 's' : ''}, ${machine.cpus} CPUs)\n\n${table}\n`);
-if (rows.some((r) => !r.ok)) process.exitCode = 1;
+if (failed) process.exitCode = 1;
