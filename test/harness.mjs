@@ -148,9 +148,17 @@ export function sandbox(t, { creds = savedCreds({ [PROD]: { acme: 'fake-token' }
   return {
     // For driving the CLI by hand, e.g. in a pty: node ...argv(args) with env in cwd work.
     env: childEnv, argv, work, report: () => report(null, null, ''),
-    run(args, { cwd = work } = {}) {
-      const r = spawnSync(process.execPath, argv(args), { cwd, env: childEnv, encoding: 'utf8', timeout: 15000 });
-      return report(r.status, r.signal, r.stdout + r.stderr);
+    // Async so the tests in a file run concurrently (each sandbox is its own home).
+    async run(args, { cwd = work } = {}) {
+      const child = spawn(process.execPath, argv(args), { cwd, env: childEnv, timeout: 15000 });
+      let out = '';
+      child.stdout.on('data', (d) => { out += d; });
+      child.stderr.on('data', (d) => { out += d; });
+      const [status, signal] = await new Promise((resolve, reject) => {
+        child.on('error', reject);
+        child.on('close', (code, sig) => resolve([code, sig]));
+      });
+      return report(status, signal, out);
     },
     // Start the CLI, wait for a TEST_HANG command, send `signal`, then report.
     async interrupt(args, signal = 'SIGINT') {
