@@ -84,6 +84,18 @@ New decks start restricted. After the first publish, open the deck's cloud page
 to make it public; setup prints this link. Publishing cannot change sharing
 settings.
 
+## Tests and bench
+
+`pnpm test` runs every suite under `test/` against fake `git`, `gh`, `pnpm`
+and cloud (`test/harness.mjs`). `pnpm bench` runs it three times and writes
+the median and min wall time, with the machine's CPU count, OS and Node, to
+`output/bench.json`, then prints the 10 slowest tests. `pnpm bench --compare`
+adds the speedup against `bench/baseline.json` (the SL-60 baseline, from an
+8-core Mac); `pnpm bench --compare main` runs `main` in a throwaway worktree
+on this machine instead, the fair before/after for a PR. `--runs N` changes
+the count and `--save` rewrites the baseline. CI runs `pnpm test` through it
+once and warns, without failing, when it takes over 1.5x its baseline.
+
 ## Cross-repo CI
 
 The `Cross-repo smoke` workflow dispatches the shared suite in private

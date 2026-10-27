@@ -1,0 +1,7 @@
+{
+  "date": "2026-10-27",
+  "machine": { "cpus": 8, "cpu": "Apple M-series", "os": "darwin", "node": "SL-60 baseline table, warm caches" },
+  "commands": {
+    "test": { "median_ms": 36600 }
+  }
+}

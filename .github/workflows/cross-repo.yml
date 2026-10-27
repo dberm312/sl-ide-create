@@ -26,7 +26,8 @@ jobs:
           node-version: 22
       - uses: pnpm/action-setup@f40ffcd9367d9f12939873eb1018b921a783ffaa # v4
       - run: pnpm install --frozen-lockfile
-      - run: pnpm test
+      # pnpm test, timed against bench/baseline.json (warns, never fails, when slow).
+      - run: node scripts/bench.mjs --runs 1 --compare test
   smoke:
     if: github.event_name != 'pull_request' && github.ref == 'refs/heads/main'
     name: Cross-repo smoke
