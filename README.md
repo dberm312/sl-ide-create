@@ -20,7 +20,8 @@ pnpm create sl-ide .                # in the current (empty) folder, named after
 ```
 
 It asks a few questions (slides or a memo; with no name in an empty
-folder, whether to build right there; the repo; publishing), then:
+folder, whether to build right there; the repo; publishing), shows the folder,
+GitHub repo and slug it is about to create and asks to go ahead, then:
 
 1. Clones the **latest** sl-ide template from GitHub, keeping its history as
    the `upstream` remote, so `git pull upstream main` brings later editor
@@ -56,6 +57,12 @@ pnpm create sl-ide login     # sign in and save an account token on this machine
 pnpm create sl-ide logout    # forget saved tokens (--all: for every server)
 pnpm create sl-ide token     # in a deck: set its repo secret to a new deck token
 ```
+
+Run inside a deck (any folder at or below an `sl-ide.config.json`), setup stops
+and points at `token` instead of making a deck inside it; `--dir` a folder
+outside the deck to make one anyway. A first argument that looks like a command
+(`status`, `publish`, `whoami`, `help`, …) is an error, not a deck name; to name
+a deck that, pass `--dir` too (`pnpm create sl-ide status --dir status`).
 
 The account token is saved in `~/.config/sl-ide/credentials.json`, readable
 only by you, and never leaves this machine. Once the slug is chosen, setup

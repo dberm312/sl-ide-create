@@ -317,6 +317,50 @@ describe('smoke', { concurrency: 8 }, () => {
     assert.equal(r.creds.servers[PROD].owner, 'acme');
   });
 
+  // --- guards (SL-88) -------------------------------------------------------
+
+  const untouched = (r) => {
+    assert.ok(!r.commands.some(([c]) => c === 'gh' || c === 'git'), r.out);
+    assert.deepEqual(r.fetches, []);
+  };
+
+  test('in a deck, or a folder inside one, create stops and points at token', async (t) => {
+    for (const [args, sub] of [[PUBLISH, ''], [['.', '--yes'], ''], [PUBLISH, 'src/slides']]) {
+      const box = sandbox(t);
+      const deck = deckFolder(box, { slug: 'philip-ant-delivery' });
+      const cwd = path.join(deck, sub);
+      fs.mkdirSync(cwd, { recursive: true });
+      const r = await box.run(args, { cwd });
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, /This is already a deck \(`philip-ant-delivery`\)\. Did you mean `pnpm create sl-ide@latest token`\?/);
+      untouched(r);
+    }
+  });
+
+  test('--dir inside a deck is refused; --dir outside it makes the deck', async (t) => {
+    const box = sandbox(t);
+    const deck = deckFolder(box, { slug: 'pitch' });
+    const inside = await box.run([...PUBLISH, '--dir', 'nested'], { cwd: deck });
+    assert.equal(inside.status, 1, inside.out);
+    assert.match(inside.out, /This is already a deck \(`pitch`\)/);
+    untouched(inside);
+    const outside = await box.run(['other', '--yes', '--github', 'none', '--no-install', '--dir', '../other'], { cwd: deck });
+    assert.equal(outside.status, 0, outside.out);
+    assert.ok(outside.commands.some((c) => c[0] === 'git' && c[1] === 'clone' && c.at(-1) === fs.realpathSync(path.join(box.work, 'other'))), outside.out);
+  });
+
+  test('a command-like name is an error listing the commands; --dir allows it as a deck name', async (t) => {
+    for (const name of ['status', 'publish', 'whoami', 'help', 'Status', 'Token', 'Login', 'Logout']) {
+      const r = await sandbox(t).run([name, '--yes']);
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, new RegExp(`"${name}" isn't a command\\. Commands: login, logout, token`));
+      untouched(r);
+    }
+    const r = await sandbox(t).run(['status', '--yes', '--dir', 'status']);
+    assert.equal(r.status, 0, r.out);
+    assert.ok(r.ran('gh repo create status --private'), r.out);
+  });
+
   test('an existing non-empty folder stops before anything runs', async (t) => {
     const box = sandbox(t);
     await box.run(['pitch', '--yes', '--github', 'none', '--no-install']);

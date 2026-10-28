@@ -163,6 +163,22 @@ function recoverySteps(step, { rel, here, repo }) {
 
 // --- commands --------------------------------------------------------------
 
+const COMMANDS = ['login', 'logout', 'token'];
+const COMMAND_LIKE = ['help', 'status', 'publish', 'unpublish', 'whoami', 'signin', 'signout', 'auth', 'secret', 'rekey', 'config', 'deploy', 'share', 'list', 'ls', 'open', 'dev', 'update', 'upgrade', 'version', 'init', 'new', 'create', 'doctor', 'check'];
+
+// The deck that holds `dir`, if any: the nearest sl-ide.config.json above it.
+function deckAround(dir) {
+  for (let d = path.resolve(dir); ; d = path.dirname(d)) {
+    const f = path.join(d, 'sl-ide.config.json');
+    if (fs.existsSync(f)) {
+      let slug;
+      try { slug = JSON.parse(fs.readFileSync(f, 'utf8')).slug; } catch {}
+      return { root: d, slug: typeof slug === 'string' ? slug : path.basename(d) };
+    }
+    if (path.dirname(d) === d) return null;
+  }
+}
+
 async function login() {
   p.intro('sl-ide cloud');
   await signIn();
@@ -225,6 +241,12 @@ function logout() {
 
 async function create() {
   p.intro('sl-ide · new deck');
+  const arg = positionals[0];
+  if ([...COMMANDS, ...COMMAND_LIKE].includes(arg?.toLowerCase()) && !o.dir) {
+    bail(`"${arg}" isn't a command. Commands: ${COMMANDS.join(', ')} (pnpm create sl-ide --help). To make a deck named ${arg}: pnpm create sl-ide ${arg} --dir ${arg}`);
+  }
+  const deck = deckAround(o.dir ?? '.');
+  if (deck) bail(`This is already a deck (\`${deck.slug}\`). Did you mean \`pnpm create sl-ide@latest token\`?${o.dir ? '' : ' To make a new deck elsewhere, pass --dir <a folder outside this deck>.'}`);
   if (o.feedback !== undefined && !['auto','off'].includes(o.feedback)) bail('--feedback is auto or off');
   preflight();
 
@@ -318,9 +340,6 @@ async function create() {
       } catch (e) { bail(e.message); }
       if (o.replace !== undefined) p.log.warn(`Explicitly replacing deck ${slug} for your account.`);
       else if (slug !== originalSlug) p.log.info(`Using new deck slug ${slug}; ${originalSlug} is already in use.`);
-      // The repo gets a token for this deck only; the account token stays here.
-      const minted = await deckToken(pub.token, slug).catch((e) => bail(`Couldn't make a publish token for ${slug}: ${e.message}. Nothing has been created yet; try again.`));
-      pub = { ...pub, deckToken: minted };
     }
   } else if (o.publish && github === 'none') {
     p.log.info('Publishing runs in GitHub Actions, so it is off without a repo.');
@@ -328,8 +347,22 @@ async function create() {
 
   if (o.replace !== undefined && !pub) bail('--replace requires cloud publishing and a GitHub repo.');
 
-  // Do it
   const rel = path.relative(process.cwd(), dest) || '.';
+  if (interactive) {
+    p.note([
+      `Folder       ${rel === '.' ? '. (this folder)' : rel}`,
+      `GitHub repo  ${github === 'none' ? 'none' : `github.com/${owner}/${name} (${github})`}`,
+      `Deck         ${pub ? `${slug}, published to ${CLOUD}/d/${slug}/` : 'not published'}`,
+    ].join('\n'), 'About to create');
+    if (!await ask(p.confirm({ message: 'Create it?', initialValue: true }))) bail('Cancelled. Nothing has been created.', { help: false });
+  }
+  if (pub) {
+    // The repo gets a token for this deck only; the account token stays here.
+    const minted = await deckToken(pub.token, slug).catch((e) => bail(`Couldn't make a publish token for ${slug}: ${e.message}. Nothing has been created yet; try again.`));
+    pub = { ...pub, deckToken: minted };
+  }
+
+  // Do it
   const where = { rel, here, repo: `${owner}/${name}` };
   const s = p.spinner();
   let step = null;
