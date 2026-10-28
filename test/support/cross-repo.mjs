@@ -3,6 +3,7 @@
 // all run for real. Never contacts GitHub or uses a developer's saved credentials.
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -60,6 +61,10 @@ else process.exit(2);
     assert.notEqual(deckToken, token);
     const who = await (await fetch(`${base}/api/cli/whoami`, { headers: { Authorization: `Bearer ${deckToken}` } })).json();
     assert.equal(who.deck, name);
+    const other = await fetch(`${base}/api/publish/${name}-other/${'0'.repeat(40)}/index.html`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${deckToken}`, 'X-Sl-Ide-Upload-Id': randomUUID() }, body: 'x',
+    });
+    assert.equal(other.status, 403, 'a deck token must not publish another deck');
     assert.equal(await run('git', ['remote', 'get-url', 'upstream'], deck), templateDir);
     const sha = await run('git', ['rev-parse', 'HEAD'], deck);
     assert.equal(await run('git', ['--git-dir', remote, 'rev-parse', 'refs/heads/main']), sha);
@@ -79,7 +84,7 @@ else process.exit(2);
     assert.equal(pdfs.length, 1);
     const pdf = await fs.readFile(path.join(deck, 'output', pdfs[0]));
     assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
-    return { slug: name, sha, config, pdf, format, deckToken };
+    return { slug: name, sha, config, pdf, format };
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
