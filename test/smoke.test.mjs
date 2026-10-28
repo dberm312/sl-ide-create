@@ -98,9 +98,86 @@ describe('smoke', { concurrency: 8 }, () => {
     const r = await box.run(['token'], { cwd: deckFolder(box, { slug: 'pitch' }) });
     assert.equal(r.status, 0, r.out);
     assert.deepEqual(r.fetches.filter((f) => f.url.endsWith('/api/cli/deck-token')).map((f) => [f.auth, f.body]), [['Bearer fake-token', { slug: 'pitch' }]]);
-    assert.deepEqual(r.secrets, [[['secret', 'set', 'SL_IDE_PUBLISH_TOKEN'], 'sli_deck_pitch']]);
-    assert.match(r.out, /publishes only pitch/);
+    assert.deepEqual(r.secrets, [[['secret', 'set', 'SL_IDE_PUBLISH_TOKEN', '--repo', 'tester/pitch'], 'sli_deck_pitch']]);
+    assert.match(r.out, /tester\/pitch's SL_IDE_PUBLISH_TOKEN to a token that publishes only pitch/);
     assert.doesNotMatch(r.out, /fake-token|sli_deck/);
+    assert.ok(!r.ran('gh run rerun'));
+  });
+
+  test('token: sets the secret on the repo origin names, never gh\'s default repo', async (t) => {
+    for (const origin of ['https://github.com/acme/philip-deck.git', 'git@github.com:acme/philip-deck', 'ssh://git@github.com/acme/philip-deck.git']) {
+      const box = sandbox(t, { env: { TEST_ORIGIN: origin } });
+      const r = await box.run(['token'], { cwd: deckFolder(box, { slug: 'pitch' }) });
+      assert.equal(r.status, 0, r.out);
+      assert.deepEqual(r.secrets.map(([args]) => args.slice(-2)), [['--repo', 'acme/philip-deck']], origin);
+    }
+  });
+
+  test('token: refuses a deck without a GitHub origin before minting', async (t) => {
+    for (const [env, fail, message] of [[{}, ['git remote get-url'], /no origin remote/], [{ TEST_ORIGIN: 'https://gitlab.com/acme/pitch.git' }, [], /isn't a GitHub repo/]]) {
+      const box = sandbox(t, { env, fail });
+      const r = await box.run(['token'], { cwd: deckFolder(box, { slug: 'pitch' }) });
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, message);
+      assert.deepEqual(r.fetches, []);
+      assert.deepEqual(r.secrets, []);
+    }
+  });
+
+  test('token: says so and mints nothing when another account owns the deck', async (t) => {
+    const box = sandbox(t, { cloud: { slugs: { pitch: { available: false, reason: 'another user already has a deck with this name' } } } });
+    const r = await box.run(['token'], { cwd: deckFolder(box, { slug: 'pitch' }) });
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /acme can't publish pitch: another user already has a deck with this name\. If another account owns it, sign in as that account \(pnpm create sl-ide login\)/);
+    assert.ok(!r.fetches.some((f) => f.url.endsWith('/api/cli/deck-token')));
+    assert.deepEqual(r.secrets, []);
+  });
+
+  test('token: a deck that never published is created by its first publish', async (t) => {
+    const box = sandbox(t, { cloud: { slugs: { pitch: { available: true, exists: false } } } });
+    const r = await box.run(['token'], { cwd: deckFolder(box, { slug: 'pitch' }) });
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /pitch isn't on https:\/\/app\.sl-ide\.com yet; its first publish creates it for acme/);
+    assert.equal(r.secrets.length, 1);
+  });
+
+  const FAILED_RUN = JSON.stringify([{ databaseId: 42, conclusion: 'failure', headBranch: 'main', displayTitle: 'Edit cover' }]);
+
+  test('token --yes reruns the newest publish run when it failed', async (t) => {
+    const box = sandbox(t, { env: { TEST_GH_RUNS: FAILED_RUN } });
+    const r = await box.run(['token', '--yes'], { cwd: deckFolder(box, { slug: 'pitch' }) });
+    assert.equal(r.status, 0, r.out);
+    assert.ok(r.ran('gh run list --repo tester/pitch --workflow publish.yml --limit 1'), r.out);
+    assert.ok(r.ran('gh run rerun 42 --failed --repo tester/pitch'), r.out);
+    const order = r.commands.map((c) => c.slice(0, 3).join(' '));
+    assert.ok(order.indexOf('gh secret set') < order.indexOf('gh run rerun'));
+    assert.match(r.out, /last publish \(main: Edit cover\) failed[\s\S]*gh run watch 42 --repo tester\/pitch/);
+  });
+
+  test('token without a terminal prints the rerun command instead of rerunning', async (t) => {
+    const box = sandbox(t, { env: { TEST_GH_RUNS: FAILED_RUN } });
+    const r = await box.run(['token'], { cwd: deckFolder(box, { slug: 'pitch' }) });
+    assert.equal(r.status, 0, r.out);
+    assert.ok(!r.ran('gh run rerun'));
+    assert.match(r.out, /To rerun it: gh run rerun 42 --failed --repo tester\/pitch/);
+  });
+
+  test('token: a newest run that passed, or no run list, offers no rerun', async (t) => {
+    for (const [env, fail] of [[{ TEST_GH_RUNS: JSON.stringify([{ databaseId: 43, conclusion: 'success', headBranch: 'main', displayTitle: 'x' }]) }, []], [{}, ['gh run list']]]) {
+      const box = sandbox(t, { env, fail });
+      const r = await box.run(['token', '--yes'], { cwd: deckFolder(box, { slug: 'pitch' }) });
+      assert.equal(r.status, 0, r.out);
+      assert.ok(!r.ran('gh run rerun'));
+      assert.doesNotMatch(r.out, /rerun/i);
+    }
+  });
+
+  test('token: a failed rerun still leaves the new secret and says how to rerun', async (t) => {
+    const box = sandbox(t, { env: { TEST_GH_RUNS: FAILED_RUN }, fail: ['gh run rerun'] });
+    const r = await box.run(['token', '--yes'], { cwd: deckFolder(box, { slug: 'pitch' }) });
+    assert.equal(r.status, 0, r.out);
+    assert.equal(r.secrets.length, 1);
+    assert.match(r.out, /gh run rerun 42 --failed --repo tester\/pitch failed \(test\)[\s\S]*To rerun it: gh run rerun 42/);
   });
 
   test('token: refuses a folder without a deck config, or a deck on another server', async (t) => {

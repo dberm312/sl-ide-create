@@ -184,13 +184,38 @@ async function token() {
   try { server = config.url === undefined ? DEFAULT_CLOUD : new URL(config.url).origin; } catch { bail('sl-ide.config.json has an invalid "url".'); }
   if (server !== CLOUD) bail(`This deck publishes to ${server}. Run: SL_IDE_URL=${server} pnpm create sl-ide token`);
   if (!ghReady()) bail('GitHub CLI is not signed in. Run: gh auth login');
+  const origin = await run('git', ['remote', 'get-url', 'origin']).catch(() => '');
+  const repo = origin.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?\/?$/)?.[1];
+  if (!repo) bail(origin ? `origin (${origin}) isn't a GitHub repo, so there is no secret to set.` : 'This deck has no origin remote, so there is no GitHub repo to give the token to.');
   const pub = readCreds() ?? await signIn();
   const ok = await whoami(pub.token).catch((e) => bail(`Couldn't check the saved token: ${e.message}`));
   if (!ok || ok.owner !== pub.owner || ok.deck) bail(`The saved token for ${pub.owner} was rejected (revoked?). Run: pnpm create sl-ide login`);
+  const deck = await slugAvailable(pub.token, slug);
+  if (!deck.available) bail(`${pub.owner} can't publish ${slug}: ${deck.reason}. If another account owns it, sign in as that account (pnpm create sl-ide login) and run this again.`);
+  if (!deck.exists) p.log.info(`${slug} isn't on ${CLOUD} yet; its first publish creates it for ${pub.owner}.`);
   const minted = await deckToken(pub.token, slug).catch((e) => bail(`Couldn't make a deck token: ${e.message}`));
-  await run('gh', ['secret', 'set', 'SL_IDE_PUBLISH_TOKEN'], { input: minted })
+  await run('gh', ['secret', 'set', 'SL_IDE_PUBLISH_TOKEN', '--repo', repo], { input: minted })
     .catch((e) => bail(`${e.message}\nThe new token was not stored; revoke the unused "Deck · ${slug}" token at ${CLOUD}/tokens.`));
-  p.outro(`Set SL_IDE_PUBLISH_TOKEN to a token that publishes only ${slug}. Revoke any older token for it at ${CLOUD}/tokens.`);
+  p.log.success(`Set ${repo}'s SL_IDE_PUBLISH_TOKEN to a token that publishes only ${slug}.`);
+  await rerunFailedPublish(repo);
+  p.outro(`Revoke any older token for ${slug} at ${CLOUD}/tokens.`);
+}
+
+// The deck's newest publish run, if it failed (most likely on the old token).
+// An older failed run is never offered: rerunning it would publish a stale commit.
+async function rerunFailedPublish(repo) {
+  const runs = await run('gh', ['run', 'list', '--repo', repo, '--workflow', 'publish.yml', '--limit', '1', '--json', 'databaseId,conclusion,headBranch,displayTitle'])
+    .then(JSON.parse, () => []);
+  const last = runs[0];
+  if (last?.conclusion !== 'failure') return;
+  const rerun = ['run', 'rerun', String(last.databaseId), '--failed', '--repo', repo];
+  p.log.warn(`The last publish (${last.headBranch}: ${last.displayTitle}) failed.`);
+  const again = interactive ? await ask(p.confirm({ message: 'Rerun it with the new token?', initialValue: true })) : o.yes;
+  if (!again) { p.log.info(`To rerun it: gh ${rerun.join(' ')}`); return; }
+  await run('gh', rerun).then(
+    () => p.log.success(`Rerunning it: gh run watch ${last.databaseId} --repo ${repo}`),
+    (e) => p.log.warn(`${e.message}\nTo rerun it: gh ${rerun.join(' ')}`),
+  );
 }
 
 function logout() {

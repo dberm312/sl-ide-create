@@ -34,6 +34,8 @@ if (match('TEST_HANG')) {
     }
   }
   if (command === 'git' && args[0] === 'log') console.log('abc123 template');
+  if (command === 'git' && args[0] === 'remote' && args[1] === 'get-url') console.log(process.env.TEST_ORIGIN ?? 'git@github.com:tester/pitch.git');
+  if (command === 'gh' && args[0] === 'run' && args[1] === 'list') console.log(process.env.TEST_GH_RUNS || '[]');
   if (command === 'gh' && args[0] === 'secret') {
     let input = '';
     process.stdin.on('data', (d) => { input += d; });

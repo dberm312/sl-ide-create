@@ -61,8 +61,12 @@ The account token is saved in `~/.config/sl-ide/credentials.json`, readable
 only by you, and never leaves this machine. Once the slug is chosen, setup
 trades it for a deck token for that slug (`POST /api/cli/deck-token`) and puts
 only that in the repo, so a leaked repo secret can publish only that one deck.
-`token` does the same for an existing deck (after a failed setup, or for a deck
-made before deck tokens); revoke the token it replaces at
+`token` does the same for an existing deck (after a failed setup, a revoked
+token, or for a deck made before deck tokens): run in the deck, it reads the
+slug from `sl-ide.config.json`, checks that your account may publish it
+(`GET /api/cli/slug/<slug>`) and says so if another account owns it, sets the
+secret on the repo `origin` names, and offers to rerun the deck's newest
+publish run if that one failed. Revoke the token it replaces at
 app.sl-ide.com/tokens, where both kinds are listed. Each token is kept for the
 server that issued it and only ever sent there. `SL_IDE_URL` picks another
 server (https, or http on localhost), which needs its own `login`; decks set up
