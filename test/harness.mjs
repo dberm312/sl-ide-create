@@ -108,6 +108,11 @@ export function sandbox(t, { creds = savedCreds({ [PROD]: { acme: 'fake-token' }
     fs.writeFileSync(path.join(bin, `${command}.mjs`), stub, { mode: 0o755 });
     fs.symlinkSync(`${command}.mjs`, path.join(bin, command));
   }
+  // Browsers that only record the page they were asked to open.
+  for (const command of ['xdg-open', 'open']) {
+    fs.writeFileSync(path.join(bin, `${command}.mjs`), stub, { mode: 0o755 });
+    fs.symlinkSync(`${command}.mjs`, path.join(bin, command));
+  }
   if (missing.length) fs.symlinkSync(spawnSync('which', ['which'], { encoding: 'utf8' }).stdout.trim(), path.join(bin, 'which'));
   const conf = path.join(root, 'config');
   const credsFile = path.join(conf, 'sl-ide', 'credentials.json');

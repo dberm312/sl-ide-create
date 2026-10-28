@@ -112,8 +112,9 @@ async function signIn() {
   const s = p.spinner();
   const got = await deviceLogin({
     open: o.open,
-    onCode: (code, url) => {
-      p.note(`${url}\n\nCode: ${code}`, o.open ? 'Approve in your browser' : 'Open this link to approve');
+    onCode: (code, url, opened) => {
+      if (o.open && !opened) p.log.warn(`Not opening the sign-in link: it isn't a page on ${CLOUD}.`);
+      p.note(`${url}\n\nCode: ${code}`, opened ? 'Approve in your browser' : 'Open this link to approve');
       s.start('Waiting for approval');
     },
   }).catch((e) => { s.stop('Sign-in failed'); bail(e.message); });

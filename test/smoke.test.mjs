@@ -174,6 +174,35 @@ describe('smoke', { concurrency: 8 }, () => {
     assert.equal(r.credsMode, 0o600);
   });
 
+  // The browser is a detached process, so its record can land after the CLI exits.
+  const browsed = async (box) => {
+    const until = Date.now() + 5000;
+    while (!box.report().ran('xdg-open') && Date.now() < until) await new Promise((r) => setTimeout(r, 20));
+    return box.report().commands.filter(([c]) => c === 'xdg-open');
+  };
+
+  for (const link of [DEFAULT_START.json.verification_uri_complete, `${PROD}/cli&calc`]) {
+    test(`login opens ${link} as one argument, without a shell`, async (t) => {
+      const box = sandbox(t, { creds: null, cloud: { start: { ...DEFAULT_START, json: { ...DEFAULT_START.json, verification_uri_complete: link } } } });
+      const r = await box.run(['login']);
+      assert.equal(r.status, 0, r.out);
+      assert.match(r.out, /Approve in your browser/);
+      assert.deepEqual(await browsed(box), [['xdg-open', link]]);
+    });
+  }
+
+  for (const link of ['https://evil.example/cli?code=ABCD-1234', 'http://app.sl-ide.com/cli?code=ABCD-1234', 'https://x@app.sl-ide.com/cli', 'file:///etc/passwd', 'javascript:alert(1)', 'not a url']) {
+    test(`login prints but never opens ${link}`, async (t) => {
+      const box = sandbox(t, { creds: null, cloud: { start: { ...DEFAULT_START, json: { ...DEFAULT_START.json, verification_uri_complete: link } } } });
+      const r = await box.run(['login']);
+      assert.equal(r.status, 0, r.out);
+      assert.match(r.out, /Not opening the sign-in link: it isn't a page on https:\/\/app\.sl-ide\.com/);
+      assert.match(r.out, /Open this link to approve/);
+      assert.ok(r.out.includes(link), r.out);
+      assert.deepEqual(r.commands.filter(([c]) => c === 'xdg-open' || c === 'open'), []);
+    });
+  }
+
   // --- slow, failed and lost cloud answers ----------------------------------
 
   const FAST = { SL_IDE_REQUEST_TIMEOUT_MS: '200', SL_IDE_RETRY_BACKOFF_MS: '1' };
