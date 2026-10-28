@@ -47,12 +47,14 @@ if (a[0] === 'repo' && a[1] === 'view') process.exit(1);
 if (a[0] === 'repo' && a[1] === 'create') {
   execFileSync('git', ['init', '--bare', '-q', process.env.SMOKE_REMOTE]);
   execFileSync('git', ['remote', 'add', 'origin', process.env.SMOKE_REMOTE]);
-} else if (a[0] === 'secret' && a[1] === 'set') fs.writeFileSync(process.env.SMOKE_SECRET, fs.readFileSync(0), { mode: 0o600 });
+} else if (a[0] === 'repo' && a[1] === 'set-default') process.exit(a[2] === 'smoke-user/${name}' ? 0 : 3);
+else if (a[0] === 'secret' && a[1] === 'set') fs.writeFileSync(process.env.SMOKE_SECRET, fs.readFileSync(0), { mode: 0o600 });
 else process.exit(2);
 `, { mode: 0o755 });
     // Node must parse the executable fake gh as ESM even outside a package.
     await fs.writeFile(path.join(bin, 'package.json'), '{"type":"module"}');
-    await run(process.execPath, [cli, name, '--format', format, '--github', 'private', '--no-install', '--yes']);
+    const out = await run(process.execPath, [cli, name, '--format', format, '--github', 'private', '--no-install', '--yes']);
+    assert.doesNotMatch(out, /gh repo set-default/, 'gh in the deck should default to its own repo');
     const deck = path.join(work, name);
     const config = JSON.parse(await fs.readFile(path.join(deck, 'sl-ide.config.json'), 'utf8'));
     assert.deepEqual(config, { slug: name, url: base });
