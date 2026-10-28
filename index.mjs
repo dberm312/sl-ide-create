@@ -8,14 +8,18 @@
 // so a new deck always starts from the template's main.
 //
 //   pnpm create sl-ide .         start the deck in this (empty) folder, named after it
-//   pnpm create sl-ide login     sign in to sl-ide cloud and save a publish token
+//   pnpm create sl-ide login     sign in to sl-ide cloud and save an account token here
 //   pnpm create sl-ide logout    forget saved tokens for this cloud server
+//   pnpm create sl-ide token     in a deck: give its repo a new deck token
+//
+// The account token stays in ~/.config/sl-ide. A deck repo's
+// SL_IDE_PUBLISH_TOKEN secret is a deck token, which publishes that deck only.
 import fs from 'node:fs';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
 import { parseArgs } from 'node:util';
 import * as p from '@clack/prompts';
-import { CLOUD, DEFAULT_CLOUD, credsPath, deviceLogin, forget, readCreds, saveToken, slugAvailable, whoami } from './lib/cloud.mjs';
+import { CLOUD, DEFAULT_CLOUD, credsPath, deckToken, deviceLogin, forget, readCreds, saveToken, slugAvailable, whoami } from './lib/cloud.mjs';
 import { ghReady, has, run, stopRunning } from './lib/run.mjs';
 import { chooseSlug, SLUG_RE } from './lib/slug.mjs';
 
@@ -41,8 +45,10 @@ const HELP = `
     -h, --help
 
   Commands
-    login                    sign in to sl-ide cloud and save a publish token
+    login                    sign in to sl-ide cloud and save an account token on this machine
     logout            forget saved tokens for this server (--all: every server)
+    token                    in a deck folder: set its repo's SL_IDE_PUBLISH_TOKEN to a new
+                             token that can publish only that deck
 
   Every push to the deck's repo publishes it to ${CLOUD}/d/<slug>/.
   Existing slugs get a numeric suffix unless --replace is explicitly provided.
@@ -144,8 +150,8 @@ function recoverySteps(step, { rel, here, repo }) {
     case 'repo':
       return [`Check github.com/${repo}. If it was created, delete it:`, `gh repo delete ${repo}`, ...fresh];
     case 'secret':
-      return [`github.com/${repo} exists but can't publish yet.`, `Make a publish token at ${CLOUD}/tokens, then:`,
-        ...cd, `gh secret set SL_IDE_PUBLISH_TOKEN --repo ${repo}`, 'git push -u origin main'];
+      return [`github.com/${repo} exists but can't publish yet. Give it a deck token, then push:`,
+        ...cd, 'pnpm create sl-ide token', 'git push -u origin main'];
     case 'push':
       return [`github.com/${repo} exists. Push the deck to it:`, ...cd, 'git push -u origin main'];
     case 'install':
@@ -161,6 +167,30 @@ async function login() {
   p.intro('sl-ide cloud');
   await signIn();
   p.outro(`Saved to ${credsPath} for ${CLOUD}. New decks can publish for your account.`);
+}
+
+// Give the deck in this folder (its sl-ide.config.json) a new deck token as
+// its repo's secret: after a failed setup, or to replace an old token. The
+// old one keeps working until it is revoked at /tokens.
+async function token() {
+  p.intro('sl-ide cloud · deck token');
+  let config;
+  try { config = JSON.parse(fs.readFileSync('sl-ide.config.json', 'utf8')); } catch {
+    bail('Run this in a deck folder: no readable sl-ide.config.json here.');
+  }
+  const slug = config?.slug;
+  if (typeof slug !== 'string' || !SLUG_RE.test(slug)) bail('sl-ide.config.json has no valid "slug".');
+  let server;
+  try { server = config.url === undefined ? DEFAULT_CLOUD : new URL(config.url).origin; } catch { bail('sl-ide.config.json has an invalid "url".'); }
+  if (server !== CLOUD) bail(`This deck publishes to ${server}. Run: SL_IDE_URL=${server} pnpm create sl-ide token`);
+  if (!ghReady()) bail('GitHub CLI is not signed in. Run: gh auth login');
+  const pub = readCreds() ?? await signIn();
+  const ok = await whoami(pub.token).catch((e) => bail(`Couldn't check the saved token: ${e.message}`));
+  if (!ok || ok.owner !== pub.owner || ok.deck) bail(`The saved token for ${pub.owner} was rejected (revoked?). Run: pnpm create sl-ide login`);
+  const minted = await deckToken(pub.token, slug).catch((e) => bail(`Couldn't make a deck token: ${e.message}`));
+  await run('gh', ['secret', 'set', 'SL_IDE_PUBLISH_TOKEN'], { input: minted })
+    .catch((e) => bail(`${e.message}\nThe new token was not stored; revoke the unused "Deck · ${slug}" token at ${CLOUD}/tokens.`));
+  p.outro(`Set SL_IDE_PUBLISH_TOKEN to a token that publishes only ${slug}. Revoke any older token for it at ${CLOUD}/tokens.`);
 }
 
 function logout() {
@@ -256,13 +286,16 @@ async function create() {
     if (pub) {
       const ok = await whoami(pub.token).catch((e) => bail(`Couldn't check the saved token: ${e.message}. Nothing has been created yet; try again.`));
       if (!ok) bail(`The saved token for ${pub.owner} was rejected (revoked?). Run: pnpm create sl-ide login`);
-      if (ok.owner !== pub.owner) bail('The saved account does not match the token. Run: pnpm create sl-ide login');
+      if (ok.owner !== pub.owner || ok.deck) bail('The saved account does not match the token. Run: pnpm create sl-ide login');
       const originalSlug = slug;
       try {
         slug = await chooseSlug(slug, { replace: o.replace, check: (candidate) => slugAvailable(pub.token, candidate) });
       } catch (e) { bail(e.message); }
       if (o.replace !== undefined) p.log.warn(`Explicitly replacing deck ${slug} for your account.`);
       else if (slug !== originalSlug) p.log.info(`Using new deck slug ${slug}; ${originalSlug} is already in use.`);
+      // The repo gets a token for this deck only; the account token stays here.
+      const minted = await deckToken(pub.token, slug).catch((e) => bail(`Couldn't make a publish token for ${slug}: ${e.message}. Nothing has been created yet; try again.`));
+      pub = { ...pub, deckToken: minted };
     }
   } else if (o.publish && github === 'none') {
     p.log.info('Publishing runs in GitHub Actions, so it is off without a repo.');
@@ -331,7 +364,7 @@ async function create() {
       await run('gh', ['repo', 'create', name, `--${github}`, '--source', '.', '--remote', 'origin'], { cwd: dest });
       // Before the first push, so its CI run publishes.
       step = 'secret';
-      if (pub) await run('gh', ['secret', 'set', 'SL_IDE_PUBLISH_TOKEN', '--repo', `${owner}/${name}`], { cwd: dest, input: pub.token });
+      if (pub) await run('gh', ['secret', 'set', 'SL_IDE_PUBLISH_TOKEN', '--repo', `${owner}/${name}`], { cwd: dest, input: pub.deckToken });
       step = 'push';
       await run('git', ['push', '-q', '-u', 'origin', 'main'], { cwd: dest });
       s.stop(`Created github.com/${owner}/${name} (${github})`);
@@ -374,4 +407,5 @@ async function create() {
 const cmd = positionals[0];
 if (cmd === 'login') await login();
 else if (cmd === 'logout') logout();
+else if (cmd === 'token') await token();
 else await create();

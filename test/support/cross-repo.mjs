@@ -55,7 +55,11 @@ else process.exit(2);
     const deck = path.join(work, name);
     const config = JSON.parse(await fs.readFile(path.join(deck, 'sl-ide.config.json'), 'utf8'));
     assert.deepEqual(config, { slug: name, url: base });
-    assert.equal(await fs.readFile(secret, 'utf8'), token);
+    // The repo holds a token for this deck only, never the account token.
+    const deckToken = await fs.readFile(secret, 'utf8');
+    assert.notEqual(deckToken, token);
+    const who = await (await fetch(`${base}/api/cli/whoami`, { headers: { Authorization: `Bearer ${deckToken}` } })).json();
+    assert.equal(who.deck, name);
     assert.equal(await run('git', ['remote', 'get-url', 'upstream'], deck), templateDir);
     const sha = await run('git', ['rev-parse', 'HEAD'], deck);
     assert.equal(await run('git', ['--git-dir', remote, 'rev-parse', 'refs/heads/main']), sha);
@@ -75,7 +79,7 @@ else process.exit(2);
     assert.equal(pdfs.length, 1);
     const pdf = await fs.readFile(path.join(deck, 'output', pdfs[0]));
     assert.equal(pdf.subarray(0, 5).toString(), '%PDF-');
-    return { slug: name, sha, config, pdf, format };
+    return { slug: name, sha, config, pdf, format, deckToken };
   } finally {
     await fs.rm(root, { recursive: true, force: true });
   }
