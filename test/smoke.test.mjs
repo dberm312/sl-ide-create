@@ -255,7 +255,7 @@ describe('smoke', { concurrency: 8 }, () => {
       fs.mkdirSync(cwd, { recursive: true });
       const r = await box.run(args, { cwd });
       assert.equal(r.status, 1, r.out);
-      assert.match(r.out, /This is already a deck \(`philip-ant-delivery`\)\. Did you mean `pnpm create sl-ide token`\?/);
+      assert.match(r.out, /This is already a deck \(`philip-ant-delivery`\)\. Did you mean `pnpm create sl-ide@latest token`\?/);
       untouched(r);
     }
   });
@@ -269,11 +269,11 @@ describe('smoke', { concurrency: 8 }, () => {
     untouched(inside);
     const outside = await box.run(['other', '--yes', '--github', 'none', '--no-install', '--dir', '../other'], { cwd: deck });
     assert.equal(outside.status, 0, outside.out);
-    assert.ok(outside.commands.some((c) => c[0] === 'git' && c[1] === 'clone' && c.at(-1) === path.join(box.work, 'other')), outside.out);
+    assert.ok(outside.commands.some((c) => c[0] === 'git' && c[1] === 'clone' && c.at(-1) === fs.realpathSync(path.join(box.work, 'other'))), outside.out);
   });
 
   test('a command-like name is an error listing the commands; --dir allows it as a deck name', async (t) => {
-    for (const name of ['status', 'publish', 'whoami', 'help', 'Status']) {
+    for (const name of ['status', 'publish', 'whoami', 'help', 'Status', 'Token', 'Login', 'Logout']) {
       const r = await sandbox(t).run([name, '--yes']);
       assert.equal(r.status, 1, r.out);
       assert.match(r.out, new RegExp(`"${name}" isn't a command\\. Commands: login, logout, token`));

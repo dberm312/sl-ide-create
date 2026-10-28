@@ -217,11 +217,11 @@ function logout() {
 async function create() {
   p.intro('sl-ide · new deck');
   const arg = positionals[0];
-  if (COMMAND_LIKE.includes(arg?.toLowerCase()) && !o.dir) {
+  if ([...COMMANDS, ...COMMAND_LIKE].includes(arg?.toLowerCase()) && !o.dir) {
     bail(`"${arg}" isn't a command. Commands: ${COMMANDS.join(', ')} (pnpm create sl-ide --help). To make a deck named ${arg}: pnpm create sl-ide ${arg} --dir ${arg}`);
   }
   const deck = deckAround(o.dir ?? '.');
-  if (deck) bail(`This is already a deck (\`${deck.slug}\`). Did you mean \`pnpm create sl-ide token\`?${o.dir ? '' : ' To make a new deck elsewhere, pass --dir <a folder outside this deck>.'}`);
+  if (deck) bail(`This is already a deck (\`${deck.slug}\`). Did you mean \`pnpm create sl-ide@latest token\`?${o.dir ? '' : ' To make a new deck elsewhere, pass --dir <a folder outside this deck>.'}`);
   if (o.feedback !== undefined && !['auto','off'].includes(o.feedback)) bail('--feedback is auto or off');
   preflight();
 
