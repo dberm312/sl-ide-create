@@ -240,46 +240,6 @@ describe('smoke', { concurrency: 8 }, () => {
     assert.equal(r.creds.servers[PROD].owner, 'acme');
   });
 
-  // --- stale cached CLI (SL-93) ------------------------------------------------
-
-  const STALE = /create-sl-ide \d+\.\d+\.\d+ is out of date \(latest 99\.0\.0\): run `pnpm create sl-ide@latest pitch --yes`/;
-
-  test('an older create-sl-ide than the registry\'s latest warns with the @latest command and still runs', async (t) => {
-    const r = await sandbox(t, { cloud: { registry: { status: 200, json: { version: '99.0.0' } } } }).run(PUBLISH);
-    assert.equal(r.status, 0, r.out);
-    assert.match(r.out, STALE);
-    assert.deepEqual(r.registry.map((q) => [q.url.endsWith('/create-sl-ide/latest'), q.deadline]), [[true, true]]);
-    assert.match(r.out, /Deck ready\./);
-  });
-
-  test('the latest version is asked once a day', async (t) => {
-    const box = sandbox(t, { cloud: { registry: { status: 200, json: { version: '99.0.0' } } } });
-    await box.run(['--yes', 'pitch', '--github', 'none', '--no-install', '--dir', 'a']);
-    const r = await box.run(PUBLISH);
-    assert.match(r.out, STALE);
-    assert.equal(r.registry.length, 1);
-    const cache = path.join(box.env.XDG_CONFIG_HOME, 'sl-ide', 'latest-version.json');
-    fs.writeFileSync(cache, JSON.stringify({ checked: Date.now() - 25 * 3_600_000, latest: '99.0.0' }));
-    assert.equal((await box.run(['logout'])).registry.length, 2);
-  });
-
-  test('the current version, an unreachable registry or a slow one never warns or stops the run', async (t) => {
-    for (const registry of [undefined, { drop: true }, { status: 500, json: {} }, { hang: true }, { status: 200, json: { version: '0.0.1' } }]) {
-      const started = Date.now();
-      const r = await sandbox(t, { cloud: registry ? { registry } : {} }).run(PUBLISH);
-      assert.equal(r.status, 0, r.out);
-      assert.doesNotMatch(r.out, /out of date/);
-      assert.equal(r.registry.length, 1);
-      if (registry?.hang) assert.ok(Date.now() - started < 10_000);
-    }
-  });
-
-  test('a failed check is not retried for an hour', async (t) => {
-    const box = sandbox(t, { cloud: { registry: { drop: true } } });
-    await box.run(['logout']);
-    assert.equal((await box.run(['logout'])).registry.length, 1);
-  });
-
   test('an existing non-empty folder stops before anything runs', async (t) => {
     const box = sandbox(t);
     await box.run(['pitch', '--yes', '--github', 'none', '--no-install']);
@@ -554,4 +514,44 @@ describe('smoke', { concurrency: 8 }, () => {
       assert.ok(!alive(r.hungPid), `${step} should be stopped`);
     });
   }
+
+  // --- stale cached CLI (SL-93) ------------------------------------------------
+
+  const STALE = /create-sl-ide \d+\.\d+\.\d+ is out of date \(latest 99\.0\.0\): run `pnpm create sl-ide@latest pitch --yes`/;
+
+  test('an older create-sl-ide than the registry\'s latest warns with the @latest command and still runs', async (t) => {
+    const r = await sandbox(t, { cloud: { registry: { status: 200, json: { version: '99.0.0' } } } }).run(PUBLISH);
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, STALE);
+    assert.deepEqual(r.registry.map((q) => [q.url.endsWith('/create-sl-ide/latest'), q.deadline]), [[true, true]]);
+    assert.match(r.out, /Deck ready\./);
+  });
+
+  test('the latest version is asked once a day', async (t) => {
+    const box = sandbox(t, { cloud: { registry: { status: 200, json: { version: '99.0.0' } } } });
+    await box.run(['--yes', 'pitch', '--github', 'none', '--no-install', '--dir', 'a']);
+    const r = await box.run(PUBLISH);
+    assert.match(r.out, STALE);
+    assert.equal(r.registry.length, 1);
+    const cache = path.join(box.env.XDG_CONFIG_HOME, 'sl-ide', 'latest-version.json');
+    fs.writeFileSync(cache, JSON.stringify({ checked: Date.now() - 25 * 3_600_000, latest: '99.0.0' }));
+    assert.equal((await box.run(['logout'])).registry.length, 2);
+  });
+
+  test('the current version, an unreachable registry or a slow one never warns or stops the run', async (t) => {
+    for (const registry of [undefined, { drop: true }, { status: 500, json: {} }, { hang: true }, { status: 200, json: { version: '0.0.1' } }]) {
+      const started = Date.now();
+      const r = await sandbox(t, { cloud: registry ? { registry } : {} }).run(PUBLISH);
+      assert.equal(r.status, 0, r.out);
+      assert.doesNotMatch(r.out, /out of date/);
+      assert.equal(r.registry.length, 1);
+      if (registry?.hang) assert.ok(Date.now() - started < 10_000);
+    }
+  });
+
+  test('a failed check is not retried for an hour', async (t) => {
+    const box = sandbox(t, { cloud: { registry: { drop: true } } });
+    await box.run(['logout']);
+    assert.equal((await box.run(['logout'])).registry.length, 1);
+  });
 });
