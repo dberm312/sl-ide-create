@@ -22,6 +22,7 @@ import * as p from '@clack/prompts';
 import { CLOUD, DEFAULT_CLOUD, credsPath, deckToken, deviceLogin, forget, readCreds, saveToken, slugAvailable, whoami } from './lib/cloud.mjs';
 import { ghReady, has, run, stopRunning } from './lib/run.mjs';
 import { chooseSlug, SLUG_RE } from './lib/slug.mjs';
+import { latestVersion, outdated, VERSION } from './lib/version.mjs';
 
 const TEMPLATE = process.env.SL_IDE_TEMPLATE || 'https://github.com/dberm312/sl-ide-template.git';
 
@@ -151,7 +152,7 @@ function recoverySteps(step, { rel, here, repo }) {
       return [`Check github.com/${repo}. If it was created, delete it:`, `gh repo delete ${repo}`, ...fresh];
     case 'secret':
       return [`github.com/${repo} exists but can't publish yet. Give it a deck token, then push:`,
-        ...cd, 'pnpm create sl-ide token', 'git push -u origin main'];
+        ...cd, 'pnpm create sl-ide@latest token', 'git push -u origin main'];
     case 'push':
       return [`github.com/${repo} exists. Push the deck to it:`, ...cd, 'git push -u origin main'];
     case 'install':
@@ -198,7 +199,7 @@ async function token() {
   if (typeof slug !== 'string' || !SLUG_RE.test(slug)) bail('sl-ide.config.json has no valid "slug".');
   let server;
   try { server = config.url === undefined ? DEFAULT_CLOUD : new URL(config.url).origin; } catch { bail('sl-ide.config.json has an invalid "url".'); }
-  if (server !== CLOUD) bail(`This deck publishes to ${server}. Run: SL_IDE_URL=${server} pnpm create sl-ide token`);
+  if (server !== CLOUD) bail(`This deck publishes to ${server}. Run: SL_IDE_URL=${server} pnpm create sl-ide@latest token`);
   if (!ghReady()) bail('GitHub CLI is not signed in. Run: gh auth login');
   const origin = await run('git', ['remote', 'get-url', 'origin']).catch(() => '');
   const repo = origin.match(/github\.com[/:]([^/]+\/[^/]+?)(?:\.git)?\/?$/)?.[1];
@@ -464,6 +465,10 @@ async function create() {
   }
   p.outro(format === 'memo' ? 'Memo ready.' : 'Deck ready.');
 }
+
+// pnpm create reuses a cached copy, which can be far behind (SL-93).
+const latest = await latestVersion();
+if (outdated(latest)) p.log.warn(`create-sl-ide ${VERSION} is out of date (latest ${latest}): run \`${['pnpm create sl-ide@latest', ...process.argv.slice(2)].join(' ')}\``);
 
 const cmd = positionals[0];
 if (cmd === 'login') await login();
