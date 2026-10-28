@@ -420,6 +420,9 @@ async function create() {
       step = 'repo';
       s.start(`Creating github.com/${owner}/${name}`);
       await run('gh', ['repo', 'create', name, `--${github}`, '--source', '.', '--remote', 'origin'], { cwd: dest });
+      // Otherwise gh in the deck may pick `upstream` (the template) for run list, secret set, etc.
+      const defaulted = await run('gh', ['repo', 'set-default', `${owner}/${name}`], { cwd: dest }).then(() => true, () => false);
+      if (!defaulted) p.log.warn(`Couldn't make ${owner}/${name} gh's default repo in the deck. In ${rel}, run: gh repo set-default ${owner}/${name}`);
       // Before the first push, so its CI run publishes.
       step = 'secret';
       if (pub) await run('gh', ['secret', 'set', 'SL_IDE_PUBLISH_TOKEN', '--repo', `${owner}/${name}`], { cwd: dest, input: pub.deckToken });

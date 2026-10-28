@@ -17,11 +17,27 @@ describe('smoke', { concurrency: 8 }, () => {
     const r = await sandbox(t).run(PUBLISH);
     assert.equal(r.status, 0, r.out);
     assert.deepEqual(r.config(), { slug: 'pitch' });
-    for (const step of ['git clone', 'git remote rename origin upstream', 'gh repo create pitch --private', 'gh secret set SL_IDE_PUBLISH_TOKEN --repo tester/pitch', 'git push -q -u origin main', 'pnpm install']) {
+    for (const step of ['git clone', 'git remote rename origin upstream', 'gh repo create pitch --private', 'gh repo set-default tester/pitch', 'gh secret set SL_IDE_PUBLISH_TOKEN --repo tester/pitch', 'git push -q -u origin main', 'pnpm install']) {
       assert.ok(r.ran(step), `${step} should run:\n${r.out}`);
     }
     assert.ok(!r.ran('node scripts/use-format.mjs'));
     assert.equal(r.file('pitch/format.txt'), null);
+    assert.match(r.out, /Deck ready\./);
+  });
+
+  test('gh in the deck defaults to its own repo, not the template upstream', async (t) => {
+    const r = await sandbox(t).run(PUBLISH);
+    assert.equal(r.status, 0, r.out);
+    const cmds = r.commands.map((c) => c.join(' '));
+    const i = cmds.indexOf('gh repo set-default tester/pitch');
+    assert.ok(i > cmds.findIndex((c) => c.startsWith('gh repo create pitch')) && i < cmds.findIndex((c) => c.startsWith('gh secret set')), r.out);
+  });
+
+  test('a failed gh repo set-default warns with the command and setup still finishes', async (t) => {
+    const r = await sandbox(t, { fail: ['gh repo set-default'] }).run(PUBLISH);
+    assert.equal(r.status, 0, r.out);
+    assert.match(r.out, /In pitch, run: gh repo set-default tester\/pitch/);
+    assert.ok(r.ran('git push -q -u origin main'));
     assert.match(r.out, /Deck ready\./);
   });
 

@@ -27,7 +27,9 @@ GitHub repo and slug it is about to create and asks to go ahead, then:
    the `upstream` remote, so `git pull upstream main` brings later editor
    updates into your deck. The editor isn't bundled in this package, so every
    new deck starts from the template's current `main`.
-2. Creates the deck's own GitHub repo (private by default).
+2. Creates the deck's own GitHub repo (private by default) and makes it `gh`'s
+   default repo in the deck (`gh repo set-default`), so `gh run list` and
+   `gh secret` never act on the template `upstream`.
 3. Sets it up to publish to [sl-ide cloud](https://app.sl-ide.com): signs you in
    through your browser, saves an account token on your machine, writes
    `sl-ide.config.json` and sets the repo's `SL_IDE_PUBLISH_TOKEN` secret to a
