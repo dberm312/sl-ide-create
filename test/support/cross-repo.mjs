@@ -3,6 +3,7 @@
 // all run for real. Never contacts GitHub or uses a developer's saved credentials.
 import assert from 'node:assert/strict';
 import { execFile } from 'node:child_process';
+import { randomUUID } from 'node:crypto';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
@@ -55,7 +56,15 @@ else process.exit(2);
     const deck = path.join(work, name);
     const config = JSON.parse(await fs.readFile(path.join(deck, 'sl-ide.config.json'), 'utf8'));
     assert.deepEqual(config, { slug: name, url: base });
-    assert.equal(await fs.readFile(secret, 'utf8'), token);
+    // The repo holds a token for this deck only, never the account token.
+    const deckToken = await fs.readFile(secret, 'utf8');
+    assert.notEqual(deckToken, token);
+    const who = await (await fetch(`${base}/api/cli/whoami`, { headers: { Authorization: `Bearer ${deckToken}` } })).json();
+    assert.equal(who.deck, name);
+    const other = await fetch(`${base}/api/publish/${name}-other/${'0'.repeat(40)}/index.html`, {
+      method: 'PUT', headers: { Authorization: `Bearer ${deckToken}`, 'X-Sl-Ide-Upload-Id': randomUUID() }, body: 'x',
+    });
+    assert.equal(other.status, 403, 'a deck token must not publish another deck');
     assert.equal(await run('git', ['remote', 'get-url', 'upstream'], deck), templateDir);
     const sha = await run('git', ['rev-parse', 'HEAD'], deck);
     assert.equal(await run('git', ['--git-dir', remote, 'rev-parse', 'refs/heads/main']), sha);

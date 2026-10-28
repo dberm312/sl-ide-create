@@ -28,8 +28,9 @@ folder, whether to build right there; the repo; publishing), then:
    new deck starts from the template's current `main`.
 2. Creates the deck's own GitHub repo (private by default).
 3. Sets it up to publish to [sl-ide cloud](https://app.sl-ide.com): signs you in
-   through your browser, saves a token for your account, writes
-   `sl-ide.config.json` and sets the repo's `SL_IDE_PUBLISH_TOKEN` secret.
+   through your browser, saves an account token on your machine, writes
+   `sl-ide.config.json` and sets the repo's `SL_IDE_PUBLISH_TOKEN` secret to a
+   deck token that can publish only this deck.
    Every push to `main` then updates `app.sl-ide.com/d/my-deck/`.
 4. Runs `pnpm install`.
 
@@ -51,12 +52,18 @@ Then `cd my-deck && pnpm dev`, open Claude Code or Codex there, and run
 ```
 
 ```sh
-pnpm create sl-ide login     # sign in and save a token for your account
+pnpm create sl-ide login     # sign in and save an account token on this machine
 pnpm create sl-ide logout    # forget saved tokens (--all: for every server)
+pnpm create sl-ide token     # in a deck: set its repo secret to a new deck token
 ```
 
-Tokens are saved in `~/.config/sl-ide/credentials.json`, readable only by
-you, and can be revoked at app.sl-ide.com/tokens. Each token is kept for the
+The account token is saved in `~/.config/sl-ide/credentials.json`, readable
+only by you, and never leaves this machine. Once the slug is chosen, setup
+trades it for a deck token for that slug (`POST /api/cli/deck-token`) and puts
+only that in the repo, so a leaked repo secret can publish only that one deck.
+`token` does the same for an existing deck (after a failed setup, or for a deck
+made before deck tokens); revoke the token it replaces at
+app.sl-ide.com/tokens, where both kinds are listed. Each token is kept for the
 server that issued it and only ever sent there. `SL_IDE_URL` picks another
 server (https, or http on localhost), which needs its own `login`; decks set up
 against it record it as `url` in `sl-ide.config.json`.

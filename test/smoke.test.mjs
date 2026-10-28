@@ -1,4 +1,6 @@
 // create-A: setup variants, expired credentials, interruption and recovery.
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { alive, DEFAULT_START, PROD, sandbox, savedCreds } from './harness.mjs';
@@ -21,6 +23,103 @@ describe('smoke', { concurrency: 8 }, () => {
     assert.ok(!r.ran('node scripts/use-format.mjs'));
     assert.equal(r.file('pitch/format.txt'), null);
     assert.match(r.out, /Deck ready\./);
+  });
+
+  // --- deck tokens (SL-80) ---------------------------------------------------
+
+  test('the repo secret is a deck token for the chosen slug; the account token stays local', async (t) => {
+    const r = await sandbox(t, { cloud: { slugs: { pitch: { available: true, exists: true } } } }).run(PUBLISH);
+    assert.equal(r.status, 0, r.out);
+    const mints = r.fetches.filter((f) => f.url.endsWith('/api/cli/deck-token'));
+    assert.deepEqual(mints.map((f) => [f.method, f.auth, f.body]), [['POST', 'Bearer fake-token', { slug: 'pitch-2' }]]);
+    assert.deepEqual(r.secrets, [[['secret', 'set', 'SL_IDE_PUBLISH_TOKEN', '--repo', 'tester/pitch'], 'sli_deck_pitch-2']]);
+    assert.equal(r.creds.servers[PROD].token, 'fake-token');
+    assert.doesNotMatch(r.out, /fake-token|sli_deck/);
+    // Minted before anything is created, after the slug is final.
+    const order = r.fetches.map((f) => new URL(f.url).pathname);
+    assert.ok(order.indexOf('/api/cli/deck-token') > order.lastIndexOf('/api/cli/slug/pitch-2'));
+  });
+
+  test('--replace mints the deck token for the replaced slug', async (t) => {
+    const r = await sandbox(t, { cloud: { slugs: { pitch: { available: true, exists: true } } } }).run([...PUBLISH, '--replace', 'pitch']);
+    assert.equal(r.status, 0, r.out);
+    assert.deepEqual(r.secrets.map(([, value]) => value), ['sli_deck_pitch']);
+  });
+
+  test('a freshly signed-in account mints the deck token with its new account token', async (t) => {
+    const r = await sandbox(t, { creds: null }).run([...PUBLISH, '--no-open']);
+    assert.equal(r.status, 0, r.out);
+    assert.equal(r.fetches.find((f) => f.url.endsWith('/api/cli/deck-token')).auth, 'Bearer sli_new');
+    assert.deepEqual(r.secrets.map(([, value]) => value), ['sli_deck_pitch']);
+    assert.equal(r.creds.servers[PROD].token, 'sli_new');
+  });
+
+  for (const [what, reply, says] of [
+    ['refused', { status: 403, json: { error: 'deck belongs to another owner' } }, /deck belongs to another owner/],
+    ['rejected', { status: 401, json: { error: 'unauthorized' } }, /pnpm create sl-ide login/],
+    ['lost', { drop: true }, /could not reach/],
+  ]) {
+    test(`a ${what} deck token request stops before cloning, and is not repeated`, async (t) => {
+      const r = await sandbox(t, { cloud: { deckToken: reply }, env: FAST }).run(PUBLISH);
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, says);
+      assert.match(r.out, /Nothing has been created yet/);
+      assert.ok(!r.ran('git clone') && !r.ran('gh repo create') && !r.ran('gh secret'));
+      assert.equal(r.fetches.filter((f) => f.url.endsWith('/api/cli/deck-token')).length, 1);
+    });
+  }
+
+  test('a saved deck token is not used as an account token', async (t) => {
+    const r = await sandbox(t, { cloud: { whoami: { status: 200, json: { owner: 'acme', deck: 'other' } } } }).run(PUBLISH);
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /pnpm create sl-ide login/);
+    assert.ok(!r.fetches.some((f) => f.url.endsWith('/api/cli/deck-token')));
+    assert.ok(!r.ran('git clone'));
+  });
+
+  test('no repo or no publishing mints no deck token', async (t) => {
+    for (const args of [[...PUBLISH, '--github', 'none'], [...PUBLISH, '--no-publish']]) {
+      const r = await sandbox(t).run(args);
+      assert.equal(r.status, 0, r.out);
+      assert.ok(!r.fetches.some((f) => f.url.endsWith('/api/cli/deck-token')), args.join(' '));
+      assert.deepEqual(r.secrets, []);
+    }
+  });
+
+  const deckFolder = (box, config) => {
+    const dir = path.join(box.work, 'deck');
+    fs.mkdirSync(dir);
+    if (config) fs.writeFileSync(path.join(dir, 'sl-ide.config.json'), JSON.stringify(config));
+    return dir;
+  };
+
+  test('token: gives the deck repo in this folder a new deck token', async (t) => {
+    const box = sandbox(t);
+    const r = await box.run(['token'], { cwd: deckFolder(box, { slug: 'pitch' }) });
+    assert.equal(r.status, 0, r.out);
+    assert.deepEqual(r.fetches.filter((f) => f.url.endsWith('/api/cli/deck-token')).map((f) => [f.auth, f.body]), [['Bearer fake-token', { slug: 'pitch' }]]);
+    assert.deepEqual(r.secrets, [[['secret', 'set', 'SL_IDE_PUBLISH_TOKEN'], 'sli_deck_pitch']]);
+    assert.match(r.out, /publishes only pitch/);
+    assert.doesNotMatch(r.out, /fake-token|sli_deck/);
+  });
+
+  test('token: refuses a folder without a deck config, or a deck on another server', async (t) => {
+    for (const config of [null, { slug: 'Not A Slug' }, { slug: 'pitch', url: 'http://localhost:3000' }]) {
+      const box = sandbox(t);
+      const r = await box.run(['token'], { cwd: deckFolder(box, config) });
+      assert.equal(r.status, 1, r.out);
+      assert.match(r.out, config?.url ? /SL_IDE_URL=http:\/\/localhost:3000 pnpm create sl-ide token/ : /sl-ide\.config\.json/);
+      assert.ok(!r.fetches.some((f) => f.url.endsWith('/api/cli/deck-token')));
+      assert.deepEqual(r.secrets, []);
+    }
+  });
+
+  test('token: a failed secret says to revoke the unused token', async (t) => {
+    const box = sandbox(t, { fail: ['gh secret set'] });
+    const r = await box.run(['token'], { cwd: deckFolder(box, { slug: 'pitch' }) });
+    assert.equal(r.status, 1, r.out);
+    assert.match(r.out, /revoke the unused "Deck · pitch" token at https:\/\/app\.sl-ide\.com\/tokens/);
+    assert.doesNotMatch(r.out, /sli_deck/);
   });
 
   test('memo: swaps in the memo starter and commits it before publishing', async (t) => {
@@ -377,9 +476,9 @@ describe('smoke', { concurrency: 8 }, () => {
     const r = await sandbox(t, { fail: ['gh secret set'] }).run(PUBLISH);
     assert.equal(r.status, 1, r.out);
     assert.match(r.out, /gh secret set SL_IDE_PUBLISH_TOKEN --repo tester\/pitch failed \(test\)/);
-    assert.match(r.out, /https:\/\/app\.sl-ide\.com\/tokens[\s\S]*cd pitch[\s\S]*gh secret set SL_IDE_PUBLISH_TOKEN --repo tester\/pitch[\s\S]*git push -u origin main/);
+    assert.match(r.out, /Give it a deck[\s\S]*cd pitch[\s\S]*pnpm create sl-ide token[\s\S]*git push -u origin main/);
     assert.ok(!r.ran('git push'), 'never pushes without the publish secret');
-    assert.doesNotMatch(r.out, /fake-token/);
+    assert.doesNotMatch(r.out, /fake-token|sli_deck/);
   });
 
   test('a failed push says to push again', async (t) => {

@@ -34,13 +34,19 @@ if (match('TEST_HANG')) {
     }
   }
   if (command === 'git' && args[0] === 'log') console.log('abc123 template');
+  if (command === 'gh' && args[0] === 'secret') {
+    let input = '';
+    process.stdin.on('data', (d) => { input += d; });
+    process.stdin.on('end', () => fs.appendFileSync(process.env.TEST_SECRETS, JSON.stringify([args, input]) + '\\n'));
+  }
   process.stdin.resume();
 }
 `;
 
 // Cloud fixture: per-route { status, json, headers } responses. `slugs` maps a
 // slug to its availability; other slugs are free. `poll` is the device-login
-// poll reply. A route's reply may be a list, answered in order (the last one
+// poll reply; deckToken the deck-token mint reply (default: sli_deck_<slug>).
+// A route's reply may be a list, answered in order (the last one
 // repeats). { hang: true } never answers (until the request's deadline aborts
 // it); { drop: true } fails as a lost connection does.
 export const DEFAULT_START = { status: 200, json: { device_code: 'dev-1', user_code: 'ABCD-1234', verification_uri_complete: 'https://app.sl-ide.com/cli?code=ABCD-1234', interval: 0, expires_in: 5 } };
@@ -63,10 +69,12 @@ const next = (name, reply) => {
 globalThis.fetch = async (url, init = {}) => {
   const { pathname } = new URL(url);
   const auth = init.headers?.Authorization ?? null;
-  fs.appendFileSync(process.env.TEST_FETCHES, JSON.stringify({ url: String(url), method: init.method || 'GET', auth, redirect: init.redirect ?? 'follow', deadline: init.signal instanceof AbortSignal }) + '\\n');
+  const body = init.body ? JSON.parse(init.body) : null;
+  fs.appendFileSync(process.env.TEST_FETCHES, JSON.stringify({ url: String(url), method: init.method || 'GET', auth, body, redirect: init.redirect ?? 'follow', deadline: init.signal instanceof AbortSignal }) + '\\n');
   const reply = pathname === '/api/cli/whoami' ? next('whoami', cloud.whoami)
     : pathname === '/api/cli/login/start' ? next('start', cloud.start)
     : pathname === '/api/cli/login/poll' ? next('poll', cloud.poll)
+    : pathname === '/api/cli/deck-token' ? (cloud.deckToken ? next('deckToken', cloud.deckToken) : { status: 200, json: { token: 'sli_deck_' + body?.slug, slug: body?.slug } })
     : pathname.startsWith('/api/cli/slug/') ? { status: 200, json: cloud.slugs[pathname.split('/').at(-1)] ?? { available: true, exists: false } }
     : { status: 404, json: {} };
   if (reply.hang) {
@@ -117,11 +125,11 @@ export function sandbox(t, { creds = savedCreds({ [PROD]: { acme: 'fake-token' }
   fs.writeFileSync(preload, preloadSource);
   const work = path.join(root, 'work');
   fs.mkdirSync(work);
-  const files = { commands: path.join(root, 'commands'), fetches: path.join(root, 'fetches'), hung: path.join(root, 'hung') };
+  const files = { commands: path.join(root, 'commands'), fetches: path.join(root, 'fetches'), secrets: path.join(root, 'secrets'), hung: path.join(root, 'hung') };
 
   const childEnv = {
     ...process.env, PATH: missing.length ? bin : `${bin}:${process.env.PATH}`, HOME: root, XDG_CONFIG_HOME: conf,
-    TEST_COMMANDS: files.commands, TEST_FETCHES: files.fetches, TEST_HUNG: files.hung,
+    TEST_COMMANDS: files.commands, TEST_FETCHES: files.fetches, TEST_SECRETS: files.secrets, TEST_HUNG: files.hung,
     TEST_CLOUD: JSON.stringify({ ...DEFAULT_CLOUD, ...cloud }), TEST_FAIL: JSON.stringify(fail), TEST_HANG: JSON.stringify(hang),
     TEST_USE_FORMAT: useFormat ? '1' : '', ...env,
   };
@@ -136,6 +144,8 @@ export function sandbox(t, { creds = savedCreds({ [PROD]: { acme: 'fake-token' }
     commands: lines(files.commands),
     ran: (prefix) => lines(files.commands).some((c) => c.join(' ').startsWith(prefix)),
     fetches: lines(files.fetches),
+    // [gh secret args, the value piped in], one per gh secret command.
+    secrets: lines(files.secrets),
     creds: fs.existsSync(credsFile) ? JSON.parse(fs.readFileSync(credsFile, 'utf8')) : null,
     credsMode: fs.existsSync(credsFile) ? fs.statSync(credsFile).mode & 0o777 : null,
     file: (rel) => (fs.existsSync(path.join(work, rel)) ? fs.readFileSync(path.join(work, rel), 'utf8') : null),
