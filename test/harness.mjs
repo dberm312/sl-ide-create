@@ -5,6 +5,7 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn, spawnSync } from 'node:child_process';
+import { VERSION } from '../lib/version.mjs';
 
 const cli = fileURLToPath(new URL('../index.mjs', import.meta.url));
 
@@ -68,6 +69,10 @@ const next = (name, reply) => {
 };
 globalThis.fetch = async (url, init = {}) => {
   const { pathname } = new URL(url);
+  if (pathname.endsWith('/create-sl-ide/latest')) {
+    fs.appendFileSync(process.env.TEST_REGISTRY, JSON.stringify({ url: String(url), deadline: init.signal instanceof AbortSignal }) + '\\n');
+    return answer(next('registry', cloud.registry ?? { status: 200, json: { version: process.env.TEST_VERSION } }), init);
+  }
   const auth = init.headers?.Authorization ?? null;
   const body = init.body ? JSON.parse(init.body) : null;
   fs.appendFileSync(process.env.TEST_FETCHES, JSON.stringify({ url: String(url), method: init.method || 'GET', auth, body, redirect: init.redirect ?? 'follow', deadline: init.signal instanceof AbortSignal }) + '\\n');
@@ -77,6 +82,9 @@ globalThis.fetch = async (url, init = {}) => {
     : pathname === '/api/cli/deck-token' ? (cloud.deckToken ? next('deckToken', cloud.deckToken) : { status: 200, json: { token: 'sli_deck_' + body?.slug, slug: body?.slug } })
     : pathname.startsWith('/api/cli/slug/') ? { status: 200, json: cloud.slugs[pathname.split('/').at(-1)] ?? { available: true, exists: false } }
     : { status: 404, json: {} };
+  return answer(reply, init);
+};
+const answer = (reply, init) => {
   if (reply.hang) {
     return new Promise((_, reject) => {
       const keepAlive = setInterval(() => {}, 1000);
@@ -125,11 +133,11 @@ export function sandbox(t, { creds = savedCreds({ [PROD]: { acme: 'fake-token' }
   fs.writeFileSync(preload, preloadSource);
   const work = path.join(root, 'work');
   fs.mkdirSync(work);
-  const files = { commands: path.join(root, 'commands'), fetches: path.join(root, 'fetches'), secrets: path.join(root, 'secrets'), hung: path.join(root, 'hung') };
+  const files = { commands: path.join(root, 'commands'), fetches: path.join(root, 'fetches'), registry: path.join(root, 'registry'), secrets: path.join(root, 'secrets'), hung: path.join(root, 'hung') };
 
   const childEnv = {
     ...process.env, PATH: missing.length ? bin : `${bin}:${process.env.PATH}`, HOME: root, XDG_CONFIG_HOME: conf,
-    TEST_COMMANDS: files.commands, TEST_FETCHES: files.fetches, TEST_SECRETS: files.secrets, TEST_HUNG: files.hung,
+    TEST_COMMANDS: files.commands, TEST_FETCHES: files.fetches, TEST_REGISTRY: files.registry, TEST_VERSION: VERSION, TEST_SECRETS: files.secrets, TEST_HUNG: files.hung,
     TEST_CLOUD: JSON.stringify({ ...DEFAULT_CLOUD, ...cloud }), TEST_FAIL: JSON.stringify(fail), TEST_HANG: JSON.stringify(hang),
     TEST_USE_FORMAT: useFormat ? '1' : '', ...env,
   };
@@ -144,6 +152,8 @@ export function sandbox(t, { creds = savedCreds({ [PROD]: { acme: 'fake-token' }
     commands: lines(files.commands),
     ran: (prefix) => lines(files.commands).some((c) => c.join(' ').startsWith(prefix)),
     fetches: lines(files.fetches),
+    // Version checks against the npm registry, kept apart from cloud calls.
+    registry: lines(files.registry),
     // [gh secret args, the value piped in], one per gh secret command.
     secrets: lines(files.secrets),
     creds: fs.existsSync(credsFile) ? JSON.parse(fs.readFileSync(credsFile, 'utf8')) : null,

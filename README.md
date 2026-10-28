@@ -54,8 +54,15 @@ Then `cd my-deck && pnpm dev`, open Claude Code or Codex there, and run
 ```sh
 pnpm create sl-ide login     # sign in and save an account token on this machine
 pnpm create sl-ide logout    # forget saved tokens (--all: for every server)
-pnpm create sl-ide token     # in a deck: set its repo secret to a new deck token
+pnpm create sl-ide@latest token   # in a deck: set its repo secret to a new deck token
 ```
+
+`pnpm create sl-ide` runs a copy pnpm has cached, which can be older than the
+latest release (one without `token` takes `token` for a deck name). On start
+the CLI asks the npm registry for the latest version, at most once a day and
+for at most 1.5 seconds, and warns `create-sl-ide X is out of date (latest
+Y): run pnpm create sl-ide@latest …`. Offline, it just runs. Use `@latest`
+for `token` and any command newer than your cached copy.
 
 The account token is saved in `~/.config/sl-ide/credentials.json`, readable
 only by you, and never leaves this machine. Once the slug is chosen, setup
