@@ -38,7 +38,7 @@ GitHub repo and slug it is about to create and asks to go ahead, then:
 4. Runs `pnpm install`.
 
 Then `cd my-deck && pnpm dev`, open Claude Code or Codex there, and run
-`/new-deck`.
+`/deck-setup`.
 
 ## Options
 

@@ -453,8 +453,8 @@ async function create() {
     ...(o.install ? [] : ['pnpm install']),
     'pnpm dev',
     '',
-    'Then open Claude Code or Codex in that folder and run /new-deck',
-    `(Codex: $new-deck) to learn your style and outline the ${format === 'memo' ? 'memo' : 'story'}.`,
+    'Then open Claude Code or Codex in that folder and run /deck-setup',
+    `(Codex: $deck-setup) to learn your style and outline the ${format === 'memo' ? 'memo' : 'story'}.`,
   ];
   p.note(lines.join('\n'), 'Next');
   if (pub) {
