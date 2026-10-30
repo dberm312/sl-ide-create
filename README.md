@@ -155,7 +155,7 @@ names or file contents. A random project ID lives only in gitignored
 `.sl-ide/feedback.json`; a fresh clone gets a new ID.
 
 In a deck, `pnpm feedback on` / `off` toggles automatic reports. `status` shows
-settings and the endpoint; `log` shows queued and sent JSON. `/give-feedback`
+settings and the endpoint; `log` shows queued and sent JSON. `/sl-ide-feedback`
 previews a manual report and asks “Send?” even when automatic feedback is off.
 `DO_NOT_TRACK=1` or `SL_IDE_FEEDBACK=0` blocks every delivery.
 `SL_IDE_FEEDBACK_DEBUG=1` prints scrubbed payloads locally without sending.
