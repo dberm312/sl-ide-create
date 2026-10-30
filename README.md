@@ -38,7 +38,7 @@ GitHub repo and slug it is about to create and asks to go ahead, then:
 4. Runs `pnpm install`.
 
 Then `cd my-deck && pnpm dev`, open Claude Code or Codex there, and run
-`/deck-setup`.
+`/sl-ide-setup`.
 
 ## Options
 
@@ -163,4 +163,4 @@ previews a manual report and asks “Send?” even when automatic feedback is of
 Reports are scrubbed before being saved to `.sl-ide/outbox/`, and again before
 retrying. Delivery times out after five seconds. Failed deliveries stay queued
 (up to 20 reports) for a later run; successful ones move to `.sl-ide/sent/`.
-Existing decks get the scripts through `/update-sl-ide` and stay opted out.
+Existing decks get the scripts through `/sl-ide-update` and stay opted out.
